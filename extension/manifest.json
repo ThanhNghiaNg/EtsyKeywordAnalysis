@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Etsy SEO Analyst",
+  "version": "1.0.0",
+  "description": "Quét kết quả tìm kiếm Etsy và phân tích SEO từ dữ liệu eRank.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://www.etsy.com/*",
+    "https://members.erank.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Etsy SEO Analyst",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.etsy.com/search*"],
+      "js": ["scraper.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

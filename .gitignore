@@ -1,0 +1,4 @@
+# curl.txt contains a short-lived Bearer token and request signature.
+curl.txt
+
+.DS_Store

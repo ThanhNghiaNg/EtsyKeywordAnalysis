@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="dashboard.css">
+    <title>Etsy SEO Analyst</title>
+  </head>
+  <body>
+    <aside>
+      <div class="logo"><span>ES</span><div><b>Etsy SEO</b><small>Analyst</small></div></div>
+      <nav>
+        <button class="active" data-view="overview">Tổng quan</button>
+        <button data-view="keywords">So sánh keyword</button>
+        <button data-view="listings">Top listings</button>
+        <button data-view="tags">Cơ hội tag</button>
+        <button data-view="settings">Cấu hình</button>
+      </nav>
+      <div class="side-status"><i id="statusDot"></i><span id="sideStatus">Sẵn sàng</span></div>
+    </aside>
+    <main>
+      <header>
+        <div><p>ETSY MARKET INTELLIGENCE</p><h1 id="pageTitle">Tổng quan SEO</h1></div>
+        <div class="header-actions">
+          <button id="exportBtn" class="ghost">Xuất JSON</button>
+          <button id="runBtn">Chạy phân tích</button>
+        </div>
+      </header>
+      <div id="notice" class="notice" hidden></div>
+      <section id="overview" class="view active">
+        <div id="summaryCards" class="cards"></div>
+        <div class="grid two">
+          <article><div class="article-head"><div><small>HIỆU QUẢ TỪ KHÓA</small><h2>Opportunity score</h2></div></div><div id="scoreChart" class="bar-chart empty">Chưa có dữ liệu</div></article>
+          <article><div class="article-head"><div><small>NHU CẦU THỊ TRƯỜNG</small><h2>Search và competition</h2></div></div><div id="demandChart" class="scatter empty">Chưa có dữ liệu</div></article>
+        </div>
+        <article><div class="article-head"><div><small>SO SÁNH NHANH</small><h2>Keyword portfolio</h2></div></div><div class="table-wrap"><table id="overviewTable"></table></div></article>
+      </section>
+      <section id="keywords" class="view"><article><div class="article-head"><div><small>KEYWORD PORTFOLIO</small><h2>Chỉ số SEO theo từ khóa</h2></div></div><div class="table-wrap"><table id="keywordTable"></table></div></article></section>
+      <section id="listings" class="view"><article><div class="article-head row"><div><small>BENCHMARK ĐỐI THỦ</small><h2>Listings nổi bật</h2></div><select id="listingFilter"></select></div><div id="listingGrid" class="listing-grid"></div></article></section>
+      <section id="tags" class="view"><article><div class="article-head row"><div><small>KEYWORD EXPANSION</small><h2>Tag có tiềm năng</h2></div><select id="tagFilter"></select></div><div class="table-wrap"><table id="tagTable"></table></div></article></section>
+      <section id="settings" class="view">
+        <div class="grid two">
+          <article><small>DANH SÁCH ĐẦU VÀO</small><h2>Keywords</h2><p class="muted">Mỗi dòng một keyword. Có thể dán trực tiếp hoặc nhập file keyworklist.txt.</p><textarea id="keywordInput" rows="12"></textarea><div class="file-row"><label>Nhập keyworklist.txt<input id="keywordFile" type="file" accept=".txt"></label><button id="saveKeywords">Lưu keywords</button></div></article>
+          <article><small>XÁC THỰC ERANK</small><h2>Curl mẫu</h2><p class="muted">Curl chỉ được phân tích và lưu cục bộ trong Chrome. Chữ ký cũ không bị tái sử dụng.</p><textarea id="curlInput" rows="12" placeholder="curl 'https://members.erank.com/ext' ..."></textarea><div class="file-row"><label>Nhập curl.txt<input id="curlFile" type="file" accept=".txt"></label><button id="saveCurl">Lưu cấu hình</button></div><div id="configState" class="config-state"></div></article>
+        </div>
+        <article class="danger-zone"><div><h3>Xóa dữ liệu phân tích</h3><p class="muted">Xóa toàn bộ kết quả đã lưu, không xóa keyword/cấu hình.</p></div><button id="clearResults" class="danger">Xóa kết quả</button></article>
+      </section>
+    </main>
+    <script type="module" src="dashboard.js"></script>
+  </body>
+</html>
