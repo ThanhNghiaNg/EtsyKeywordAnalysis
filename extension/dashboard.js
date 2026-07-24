@@ -1,4 +1,9 @@
 import { DEFAULT_KEYWORDS } from "./default-keywords.js";
+import {
+  clearAnalysisResults,
+  getAllAnalysisResults,
+  migrateLegacyResults
+} from "./data-store.js";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -8,6 +13,12 @@ const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", cur
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
 let allResults = {};
+
+async function reloadResults() {
+  const records = await getAllAnalysisResults();
+  allResults = Object.fromEntries(records.map((record) => [record.keyword, record]));
+  renderAll();
+}
 
 function parseKeywords(text) {
   return [...new Set(text.split(/\r?\n/)
@@ -186,7 +197,12 @@ function paintJob(state = {}) {
 
 async function loadState() {
   const stored = await chrome.storage.local.get(["keywords", "results", "apiConfig", "jobState"]);
-  allResults = stored.results || {};
+  if (stored.results) {
+    await migrateLegacyResults(stored.results);
+    await chrome.storage.local.remove("results");
+  }
+  const records = await getAllAnalysisResults();
+  allResults = Object.fromEntries(records.map((record) => [record.keyword, record]));
   $("#keywordInput").value = (stored.keywords?.length ? stored.keywords : DEFAULT_KEYWORDS).join("\n");
   $("#configState").textContent = stored.apiConfig?.accessToken
     ? `Đã nhập curl lúc ${new Date(stored.apiConfig.importedAt || Date.now()).toLocaleString("vi-VN")}.`
@@ -228,7 +244,7 @@ $("#runBtn").addEventListener("click", async () => {
 });
 $("#clearResults").addEventListener("click", async () => {
   if (!confirm("Xóa toàn bộ kết quả phân tích đã lưu?")) return;
-  await chrome.storage.local.remove("results");
+  await clearAnalysisResults();
   allResults = {}; renderAll();
 });
 $("#listingFilter").addEventListener("change", renderListings);
@@ -241,6 +257,8 @@ $("#exportBtn").addEventListener("click", () => {
 });
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.jobState) paintJob(changes.jobState.newValue);
-  if (changes.results) { allResults = changes.results.newValue || {}; renderAll(); }
+});
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "RESULT_UPDATED") reloadResults();
 });
 loadState();

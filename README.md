@@ -14,8 +14,9 @@ gọi API eRank bằng request được ký động, và hiển thị dashboard 
 7. Bấm **Chạy phân tích**.
 
 Extension mở từng tab tìm kiếm Etsy ở chế độ nền, cuộn trang để tải listing,
-thu thập ID, đóng tab, rồi lấy dữ liệu SEO. Kết quả được lưu trong
-`chrome.storage.local`; không gửi curl hay token tới nơi nào ngoài eRank.
+thu thập ID, đóng tab, rồi lấy dữ liệu SEO. Kết quả phân tích được rút gọn và
+lưu riêng từng keyword trong IndexedDB. `chrome.storage.local` chỉ giữ cấu hình
+và trạng thái tác vụ; curl hay token không được gửi tới nơi nào ngoài eRank.
 
 ## Khi curl/phiên hết hạn
 

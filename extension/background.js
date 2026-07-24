@@ -1,4 +1,5 @@
 import { DEFAULT_KEYWORDS } from "./default-keywords.js";
+import { migrateLegacyResults, putAnalysisResult } from "./data-store.js";
 
 let cancelRequested = false;
 
@@ -188,6 +189,10 @@ async function setJob(patch) {
 
 async function runAnalysis() {
   const stored = await storageGet(["keywords", "results", "jobState"]);
+  if (stored.results) {
+    await migrateLegacyResults(stored.results);
+    await chrome.storage.local.remove("results");
+  }
   const keywords = (stored.keywords?.length ? stored.keywords : DEFAULT_KEYWORDS)
     .map((item) => item.trim()).filter(Boolean);
   if (!keywords.length) throw new Error("Danh sách keyword đang trống.");
@@ -202,7 +207,6 @@ async function runAnalysis() {
     message: resumeIndex ? `Tiếp tục từ keyword ${resumeIndex + 1}…` : "Đang chuẩn bị…",
     errorCode: null
   });
-  const results = { ...(stored.results || {}) };
   for (let index = resumeIndex; index < keywords.length; index += 1) {
     if (cancelRequested) throw new Error("Đã dừng theo yêu cầu.");
     const keyword = keywords[index];
@@ -210,8 +214,8 @@ async function runAnalysis() {
     const listingIds = await scrapeKeyword(keyword);
     await setJob({ current: index, message: `Đang lấy dữ liệu SEO (${listingIds.length} listings)…` });
     const data = await callListingApi(keyword, listingIds);
-    results[keyword] = { keyword, listingIds, data, collectedAt: Date.now() };
-    await storageSet({ results });
+    await putAnalysisResult({ keyword, listingIds, data, collectedAt: Date.now() });
+    chrome.runtime.sendMessage({ type: "RESULT_UPDATED", keyword }).catch(() => {});
     await setJob({ current: index + 1, message: `Đã xong “${keyword}”` });
   }
   await setJob({ status: "done", current: keywords.length, message: `Hoàn tất ${keywords.length} keyword.` });
