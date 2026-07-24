@@ -7,7 +7,7 @@ const extension = path.join(root, "extension");
 const required = [
   "manifest.json", "background.js", "scraper.js", "popup.html", "popup.js",
   "popup.css", "dashboard.html", "dashboard.js", "dashboard.css",
-  "default-keywords.js", "data-store.js"
+  "dashboard-settings.css", "default-keywords.js", "data-store.js"
 ];
 
 for (const file of required) {
@@ -55,6 +55,25 @@ if (/storageSet\s*\(\s*\{\s*results\b/.test(backgroundSource)) {
 if (!/putAnalysisResult\s*\(/.test(backgroundSource)) {
   throw new Error("Background chưa lưu kết quả theo keyword vào IndexedDB.");
 }
+if (!/DEFAULT_CACHE_MINUTES\s*=\s*10/.test(backgroundSource) || !/stored\.cacheMinutes/.test(backgroundSource)) {
+  throw new Error("Cache keyword chưa đọc cấu hình với mặc định 10 phút.");
+}
+if (!/NETWORK_ATTEMPTS\s*=\s*3/.test(backgroundSource)) {
+  throw new Error("Cơ chế retry mạng chưa được cấu hình 3 lần.");
+}
+if (!/queue\.push\(\{\s*keyword,\s*queueAttempt: queueAttempt \+ 1\s*\}\)/.test(backgroundSource)) {
+  throw new Error("Keyword lỗi chưa được đẩy xuống cuối queue.");
+}
+if (!/status:\s*failed\.length\s*\?\s*"done_with_errors"\s*:\s*"done"/.test(backgroundSource)) {
+  throw new Error("Tiến trình chưa hỗ trợ hoàn tất trong khi một số keyword bị lỗi.");
+}
+if (!/new AbortController\(\)/.test(backgroundSource) || !/activeTabIds/.test(backgroundSource)) {
+  throw new Error("Nút dừng chưa hủy cả fetch và tab Etsy đang chạy.");
+}
+const dashboardHtml = fs.readFileSync(path.join(extension, "dashboard.html"), "utf8");
+if (!/id="cacheMinutes"/.test(dashboardHtml) || !/id="stopBtn"/.test(dashboardHtml)) {
+  throw new Error("Dashboard thiếu cấu hình cache hoặc nút dừng.");
+}
 
 const { compactAnalysisRecord } = await import(path.join(extension, "data-store.js"));
 const sampleRecord = {
@@ -71,7 +90,7 @@ const sampleRecord = {
       est_revenue: { value: 100, label: "$100", computed_revenue: 999999 }
     }],
     popular_tags: Array.from({ length: 300 }, (_, index) => ({
-      keyword: index === 299 ? "sample keyword" : `tag ${index}`,
+      keyword: index === 100 ? { invalid: true } : index === 299 ? "sample keyword" : `tag ${index}`,
       occurences: index,
       competition: { value: index * 100, gauge: { color: "red", width: "100%" } },
       avg_searches: { value: index * 10, gauge: { color: "green" } },

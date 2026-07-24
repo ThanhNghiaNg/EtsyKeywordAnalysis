@@ -11,6 +11,7 @@ function paint(state = {}) {
   const current = state.current || 0;
   statusEl.textContent = running ? `Đang xử lý ${current}/${total}` :
     state.status === "error" ? "Cần cập nhật cấu hình" :
+    state.status === "done_with_errors" ? "Hoàn tất, có keyword lỗi" :
     state.status === "done" ? "Đã hoàn tất" : "Sẵn sàng";
   detailEl.textContent = state.message || "Mở dashboard để kiểm tra keyword và cấu hình curl.";
   barEl.style.width = total ? `${Math.round((current / total) * 100)}%` : "0%";

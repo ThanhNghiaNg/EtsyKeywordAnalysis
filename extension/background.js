@@ -1,11 +1,53 @@
 import { DEFAULT_KEYWORDS } from "./default-keywords.js";
-import { migrateLegacyResults, putAnalysisResult } from "./data-store.js";
+import {
+  getAnalysisResult,
+  migrateLegacyResults,
+  putAnalysisResult
+} from "./data-store.js";
 
 let cancelRequested = false;
+const activeTabIds = new Set();
+const activeFetchControllers = new Set();
 
+const DEFAULT_CACHE_MINUTES = 10;
+const MAX_CACHE_MINUTES = 43200;
+const NETWORK_ATTEMPTS = 3;
+const QUEUE_ATTEMPTS = 2;
+const RETRY_DELAYS_MS = [1200, 2500];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const storageGet = (keys) => chrome.storage.local.get(keys);
 const storageSet = (value) => chrome.storage.local.set(value);
+
+function cancelledError() {
+  const error = new Error("Đã dừng theo yêu cầu.");
+  error.code = "CANCELLED";
+  error.retryable = false;
+  return error;
+}
+
+function assertNotCancelled() {
+  if (cancelRequested) throw cancelledError();
+}
+
+function normalizeCacheMinutes(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_CACHE_MINUTES;
+  return Math.min(MAX_CACHE_MINUTES, Math.max(0, Math.round(parsed)));
+}
+
+async function cancellableFetch(url, options = {}) {
+  assertNotCancelled();
+  const controller = new AbortController();
+  activeFetchControllers.add(controller);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (cancelRequested || error.name === "AbortError") throw cancelledError();
+    throw error;
+  } finally {
+    activeFetchControllers.delete(controller);
+  }
+}
 
 function bytesToBase64(bytes) {
   let binary = "";
@@ -57,7 +99,7 @@ function randomDeviceId() {
 async function bootstrap(config) {
   const signingKey = await getOrCreateSigningKey();
   const deviceId = config.deviceId || randomDeviceId();
-  const response = await fetch("https://members.erank.com/ext/ext_start", {
+  const response = await cancellableFetch("https://members.erank.com/ext/ext_start", {
     method: "GET",
     credentials: "include",
     headers: {
@@ -100,7 +142,7 @@ async function callListingApi(keyword, listingIds) {
   };
   const rawBody = JSON.stringify(requestBody);
   const signedHeaders = await signRequest("POST", path, config.deviceId, rawBody);
-  const request = () => fetch(`https://members.erank.com${path}`, {
+  const request = () => cancellableFetch(`https://members.erank.com${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -116,7 +158,7 @@ async function callListingApi(keyword, listingIds) {
     refreshed.registered = true;
     await storageSet({ apiConfig: refreshed });
     const refreshedHeaders = await signRequest("POST", path, refreshed.deviceId, rawBody);
-    response = await fetch(`https://members.erank.com${path}`, {
+    response = await cancellableFetch(`https://members.erank.com${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -129,39 +171,76 @@ async function callListingApi(keyword, listingIds) {
   if (!response.ok) {
     const detail = await response.text();
     const authError = response.status === 401 || response.status === 403;
-    throw new Error(authError
+    const error = new Error(authError
       ? "CURL_EXPIRED: Phiên eRank/curl đã hết hạn. Hãy cập nhật curl.txt."
       : `API eRank lỗi ${response.status}: ${detail.slice(0, 180)}`);
+    error.code = authError ? "CURL_EXPIRED" : "ERANK_HTTP_ERROR";
+    error.status = response.status;
+    error.retryable = !authError && (response.status === 408 || response.status === 429 || response.status >= 500);
+    throw error;
   }
   const json = await response.json();
-  if (!json.success) throw new Error(json.error?.message || json.error || "eRank trả kết quả không thành công.");
+  if (!json.success) {
+    const error = new Error(json.error?.message || json.error || "eRank trả kết quả không thành công.");
+    error.code = "ERANK_RESPONSE_ERROR";
+    error.retryable = true;
+    throw error;
+  }
   return json.data;
+}
+
+async function callListingApiWithRetry(keyword, listingIds, onRetry) {
+  let lastError;
+  for (let attempt = 1; attempt <= NETWORK_ATTEMPTS; attempt += 1) {
+    try {
+      return await callListingApi(keyword, listingIds);
+    } catch (error) {
+      lastError = error;
+      if (error.code === "CANCELLED" || error.code === "CURL_EXPIRED" || attempt === NETWORK_ATTEMPTS || error.retryable === false) throw error;
+      await onRetry(attempt + 1, NETWORK_ATTEMPTS, error);
+      await sleep(RETRY_DELAYS_MS[attempt - 1] || RETRY_DELAYS_MS.at(-1));
+    }
+  }
+  throw lastError;
 }
 
 async function waitForTab(tabId, timeout = 30000) {
   const tab = await chrome.tabs.get(tabId);
   if (tab.status === "complete") return;
   return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(updatedListener);
+      chrome.tabs.onRemoved.removeListener(removedListener);
+    };
     const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
+      cleanup();
       reject(new Error("Etsy tải trang quá lâu."));
     }, timeout);
-    const listener = (updatedId, info) => {
+    const updatedListener = (updatedId, info) => {
       if (updatedId === tabId && info.status === "complete") {
-        clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(listener);
+        cleanup();
         resolve();
       }
     };
-    chrome.tabs.onUpdated.addListener(listener);
+    const removedListener = (removedId) => {
+      if (removedId === tabId) {
+        cleanup();
+        reject(cancelRequested ? cancelledError() : new Error("Tab Etsy đã bị đóng trước khi tải xong."));
+      }
+    };
+    chrome.tabs.onUpdated.addListener(updatedListener);
+    chrome.tabs.onRemoved.addListener(removedListener);
   });
 }
 
-async function scrapeKeyword(keyword) {
+async function scrapeKeywordOnce(keyword) {
+  assertNotCancelled();
   const tab = await chrome.tabs.create({
     url: `https://www.etsy.com/search?q=${encodeURIComponent(keyword)}`,
     active: false
   });
+  activeTabIds.add(tab.id);
   try {
     await waitForTab(tab.id);
     await sleep(700);
@@ -178,8 +257,25 @@ async function scrapeKeyword(keyword) {
     }
     return result.listingIds;
   } finally {
+    activeTabIds.delete(tab.id);
     if (tab?.id) chrome.tabs.remove(tab.id).catch(() => {});
   }
+}
+
+async function scrapeKeywordWithRetry(keyword, onRetry) {
+  let lastError;
+  for (let attempt = 1; attempt <= NETWORK_ATTEMPTS; attempt += 1) {
+    try {
+      return await scrapeKeywordOnce(keyword);
+    } catch (error) {
+      lastError = error;
+      if (cancelRequested) throw cancelledError();
+      if (error.code === "CANCELLED" || attempt === NETWORK_ATTEMPTS) throw error;
+      await onRetry(attempt + 1, NETWORK_ATTEMPTS, error);
+      await sleep(RETRY_DELAYS_MS[attempt - 1] || RETRY_DELAYS_MS.at(-1));
+    }
+  }
+  throw lastError;
 }
 
 async function setJob(patch) {
@@ -188,7 +284,7 @@ async function setJob(patch) {
 }
 
 async function runAnalysis() {
-  const stored = await storageGet(["keywords", "results", "jobState"]);
+  const stored = await storageGet(["keywords", "results", "jobState", "cacheMinutes"]);
   if (stored.results) {
     await migrateLegacyResults(stored.results);
     await chrome.storage.local.remove("results");
@@ -197,28 +293,103 @@ async function runAnalysis() {
     .map((item) => item.trim()).filter(Boolean);
   if (!keywords.length) throw new Error("Danh sách keyword đang trống.");
   cancelRequested = false;
-  const resumeIndex = stored.jobState?.errorCode === "CURL_EXPIRED"
-    ? Math.max(0, Math.min(stored.jobState.current || 0, keywords.length - 1))
-    : 0;
+  const cacheMinutes = normalizeCacheMinutes(stored.cacheMinutes);
+  const cacheTtlMs = cacheMinutes * 60 * 1000;
   await setJob({
     status: "running",
-    current: resumeIndex,
+    current: 0,
     total: keywords.length,
-    message: resumeIndex ? `Tiếp tục từ keyword ${resumeIndex + 1}…` : "Đang chuẩn bị…",
-    errorCode: null
+    message: "Đang chuẩn bị queue…",
+    errorCode: null,
+    failures: [],
+    cached: 0,
+    cacheMinutes
   });
-  for (let index = resumeIndex; index < keywords.length; index += 1) {
-    if (cancelRequested) throw new Error("Đã dừng theo yêu cầu.");
-    const keyword = keywords[index];
-    await setJob({ current: index, message: `Đang quét Etsy: “${keyword}”` });
-    const listingIds = await scrapeKeyword(keyword);
-    await setJob({ current: index, message: `Đang lấy dữ liệu SEO (${listingIds.length} listings)…` });
-    const data = await callListingApi(keyword, listingIds);
-    await putAnalysisResult({ keyword, listingIds, data, collectedAt: Date.now() });
-    chrome.runtime.sendMessage({ type: "RESULT_UPDATED", keyword }).catch(() => {});
-    await setJob({ current: index + 1, message: `Đã xong “${keyword}”` });
+  const queue = keywords.map((keyword) => ({ keyword, queueAttempt: 1 }));
+  const failures = {};
+  let settled = 0;
+  let cached = 0;
+  while (queue.length) {
+    assertNotCancelled();
+    const task = queue.shift();
+    const { keyword, queueAttempt } = task;
+    const existing = await getAnalysisResult(keyword);
+    if (cacheTtlMs > 0 && existing && Date.now() - existing.collectedAt < cacheTtlMs) {
+      settled += 1;
+      cached += 1;
+      delete failures[keyword];
+      await setJob({
+        current: settled,
+        cached,
+        failures: Object.values(failures),
+        message: `Dùng cache dưới ${cacheMinutes} phút: “${keyword}”`
+      });
+      continue;
+    }
+    try {
+      await setJob({
+        current: settled,
+        message: `Đang quét Etsy: “${keyword}”${queueAttempt > 1 ? " · lượt queue cuối" : ""}`
+      });
+      const listingIds = await scrapeKeywordWithRetry(keyword, async (attempt, total, error) => {
+        await setJob({
+          message: `Tải Etsy lỗi, retry ${attempt}/${total}: “${keyword}” · ${error.message}`
+        });
+      });
+      await setJob({ current: settled, message: `Đang lấy dữ liệu SEO (${listingIds.length} listings)…` });
+      const data = await callListingApiWithRetry(keyword, listingIds, async (attempt, total, error) => {
+        await setJob({
+          message: `Fetch eRank lỗi, retry ${attempt}/${total}: “${keyword}” · ${error.message}`
+        });
+      });
+      await putAnalysisResult({ keyword, listingIds, data, collectedAt: Date.now() });
+      chrome.runtime.sendMessage({ type: "RESULT_UPDATED", keyword }).catch(() => {});
+      settled += 1;
+      delete failures[keyword];
+      await setJob({
+        current: settled,
+        cached,
+        failures: Object.values(failures),
+        message: `Đã xong “${keyword}”`
+      });
+    } catch (error) {
+      if (error.code === "CURL_EXPIRED" || error.message.startsWith("CURL_EXPIRED")) throw error;
+      if (error.code === "CANCELLED" || cancelRequested) throw cancelledError();
+      failures[keyword] = {
+        keyword,
+        message: error.message,
+        queueAttempt,
+        failedAt: Date.now()
+      };
+      if (queueAttempt < QUEUE_ATTEMPTS) {
+        queue.push({ keyword, queueAttempt: queueAttempt + 1 });
+        await setJob({
+          current: settled,
+          cached,
+          failures: Object.values(failures),
+          message: `Đã đưa “${keyword}” xuống cuối queue để thử lại.`
+        });
+      } else {
+        settled += 1;
+        await setJob({
+          current: settled,
+          cached,
+          failures: Object.values(failures),
+          message: `Bỏ qua “${keyword}” sau ${QUEUE_ATTEMPTS} lượt queue; tiếp tục keyword khác.`
+        });
+      }
+    }
   }
-  await setJob({ status: "done", current: keywords.length, message: `Hoàn tất ${keywords.length} keyword.` });
+  const failed = Object.values(failures);
+  await setJob({
+    status: failed.length ? "done_with_errors" : "done",
+    current: keywords.length,
+    cached,
+    failures: failed,
+    message: failed.length
+      ? `Hoàn tất với ${failed.length} keyword lỗi; ${cached} keyword dùng cache.`
+      : `Hoàn tất ${keywords.length} keyword; ${cached} keyword dùng cache.`
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -239,7 +410,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "STOP_ANALYSIS") {
     cancelRequested = true;
-    sendResponse({ ok: true });
+    for (const controller of activeFetchControllers) controller.abort();
+    const tabs = [...activeTabIds];
+    Promise.allSettled(tabs.map((tabId) => chrome.tabs.remove(tabId)))
+      .then(() => sendResponse({ ok: true }));
+    return true;
   }
   if (message?.type === "OPEN_DASHBOARD") {
     chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });

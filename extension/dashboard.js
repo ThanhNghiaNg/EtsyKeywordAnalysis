@@ -183,20 +183,27 @@ function renderAll() {
 
 function paintJob(state = {}) {
   const dot = $("#statusDot");
-  dot.className = state.status === "running" ? "running" : state.status === "error" ? "error" : "";
+  const hasErrors = state.status === "error" || state.status === "done_with_errors";
+  dot.className = state.status === "running" ? "running" : hasErrors ? "error" : "";
   $("#sideStatus").textContent = state.status === "running" ? `${state.current || 0}/${state.total || 0} · ${state.message}` :
-    state.status === "error" ? "Có lỗi cần xử lý" : state.status === "done" ? "Phân tích hoàn tất" : "Sẵn sàng";
+    state.status === "error" ? "Có lỗi cần xử lý" :
+    state.status === "done_with_errors" ? `Hoàn tất · ${state.failures?.length || 0} keyword lỗi` :
+    state.status === "done" ? "Phân tích hoàn tất" : "Sẵn sàng";
   $("#runBtn").disabled = state.status === "running";
+  $("#stopBtn").hidden = state.status !== "running";
   const notice = $("#notice");
-  if (state.status === "running" || state.status === "error") {
+  if (state.status === "running" || state.status === "error" || state.status === "done_with_errors") {
     notice.hidden = false;
-    notice.className = state.status === "error" ? "notice error" : "notice";
-    notice.textContent = state.message;
+    notice.className = hasErrors ? "notice error" : "notice";
+    const failureDetail = state.status === "done_with_errors"
+      ? ` ${state.failures.map((failure) => `“${failure.keyword}”: ${failure.message}`).join(" · ")}`
+      : "";
+    notice.textContent = `${state.message || ""}${failureDetail}`;
   } else notice.hidden = true;
 }
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(["keywords", "results", "apiConfig", "jobState"]);
+  const stored = await chrome.storage.local.get(["keywords", "results", "apiConfig", "jobState", "cacheMinutes"]);
   if (stored.results) {
     await migrateLegacyResults(stored.results);
     await chrome.storage.local.remove("results");
@@ -204,6 +211,7 @@ async function loadState() {
   const records = await getAllAnalysisResults();
   allResults = Object.fromEntries(records.map((record) => [record.keyword, record]));
   $("#keywordInput").value = (stored.keywords?.length ? stored.keywords : DEFAULT_KEYWORDS).join("\n");
+  $("#cacheMinutes").value = Number.isFinite(Number(stored.cacheMinutes)) ? Number(stored.cacheMinutes) : 10;
   $("#configState").textContent = stored.apiConfig?.accessToken
     ? `Đã nhập curl lúc ${new Date(stored.apiConfig.importedAt || Date.now()).toLocaleString("vi-VN")}.`
     : "Chưa nhập curl. Extension sẽ thử dùng phiên đăng nhập eRank trong trình duyệt.";
@@ -241,6 +249,28 @@ $("#saveCurl").addEventListener("click", async () => {
 $("#runBtn").addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({ type: "START_ANALYSIS" });
   if (!response?.ok) { $("#notice").hidden = false; $("#notice").className = "notice error"; $("#notice").textContent = response?.error; }
+});
+$("#stopBtn").addEventListener("click", async () => {
+  $("#stopBtn").disabled = true;
+  await chrome.runtime.sendMessage({ type: "STOP_ANALYSIS" });
+  $("#stopBtn").disabled = false;
+});
+$("#saveCache").addEventListener("click", async () => {
+  const value = Number($("#cacheMinutes").value);
+  if (!Number.isFinite(value) || value < 0 || value > 43200) {
+    $("#notice").hidden = false;
+    $("#notice").className = "notice error";
+    $("#notice").textContent = "Thời gian cache phải từ 0 đến 43.200 phút.";
+    return;
+  }
+  const cacheMinutes = Math.round(value);
+  $("#cacheMinutes").value = cacheMinutes;
+  await chrome.storage.local.set({ cacheMinutes });
+  $("#notice").hidden = false;
+  $("#notice").className = "notice";
+  $("#notice").textContent = cacheMinutes
+    ? `Đã đặt cache ${cacheMinutes} phút.`
+    : "Đã tắt cache; mọi keyword sẽ được tải lại.";
 });
 $("#clearResults").addEventListener("click", async () => {
   if (!confirm("Xóa toàn bộ kết quả phân tích đã lưu?")) return;

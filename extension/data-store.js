@@ -12,6 +12,12 @@ function metric(source) {
   return { value: numeric(source?.value ?? source) };
 }
 
+function normalizeTagKeyword(value) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
+  return "";
+}
+
 function compactTrend(trend) {
   if (!trend || typeof trend !== "object") return {};
   return Object.fromEntries(Object.entries(trend).map(([month, point]) => [
@@ -40,7 +46,7 @@ function compactListing(listing) {
 
 function compactPopularTag(tag) {
   return {
-    keyword: String(tag.keyword || ""),
+    keyword: normalizeTagKeyword(tag.keyword),
     occurences: numeric(tag.occurences),
     competition: metric(tag.competition),
     avg_searches: metric(tag.avg_searches),
@@ -51,7 +57,9 @@ function compactPopularTag(tag) {
 }
 
 function tagPriority(tag, sourceKeyword) {
-  const exactBoost = tag.keyword?.toLowerCase() === sourceKeyword.toLowerCase() ? 1e12 : 0;
+  const exactBoost = normalizeTagKeyword(tag.keyword).toLowerCase() === String(sourceKeyword).toLowerCase()
+    ? 1e12
+    : 0;
   return exactBoost
     + numeric(tag.occurences) * 1e7
     + numeric(tag.avg_searches?.value) * 100
@@ -61,7 +69,7 @@ function tagPriority(tag, sourceKeyword) {
 export function compactAnalysisRecord(record) {
   const keyword = String(record.keyword || record.data?.keyword || "");
   const popularTags = (record.data?.popular_tags || [])
-    .filter((tag) => tag?.keyword)
+    .filter((tag) => normalizeTagKeyword(tag?.keyword))
     .sort((a, b) => tagPriority(b, keyword) - tagPriority(a, keyword))
     .slice(0, MAX_POPULAR_TAGS)
     .map(compactPopularTag);
@@ -121,6 +129,10 @@ export async function putAnalysisResult(record) {
 
 export async function getAllAnalysisResults() {
   return (await withStore("readonly", (store) => store.getAll())) || [];
+}
+
+export async function getAnalysisResult(keyword) {
+  return (await withStore("readonly", (store) => store.get(keyword))) || null;
 }
 
 export async function clearAnalysisResults() {

@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="dashboard-settings.css">
     <title>Etsy SEO Analyst</title>
   </head>
   <body>
@@ -23,6 +24,7 @@
         <div><p>ETSY MARKET INTELLIGENCE</p><h1 id="pageTitle">Tổng quan SEO</h1></div>
         <div class="header-actions">
           <button id="exportBtn" class="ghost">Xuất JSON</button>
+          <button id="stopBtn" class="danger" hidden>Ngừng phân tích</button>
           <button id="runBtn">Chạy phân tích</button>
         </div>
       </header>
@@ -43,6 +45,7 @@
           <article><small>DANH SÁCH ĐẦU VÀO</small><h2>Keywords</h2><p class="muted">Mỗi dòng một keyword. Có thể dán trực tiếp hoặc nhập file keyworklist.txt.</p><textarea id="keywordInput" rows="12"></textarea><div class="file-row"><label>Nhập keyworklist.txt<input id="keywordFile" type="file" accept=".txt"></label><button id="saveKeywords">Lưu keywords</button></div></article>
           <article><small>XÁC THỰC ERANK</small><h2>Curl mẫu</h2><p class="muted">Curl chỉ được phân tích và lưu cục bộ trong Chrome. Chữ ký cũ không bị tái sử dụng.</p><textarea id="curlInput" rows="12" placeholder="curl 'https://members.erank.com/ext' ..."></textarea><div class="file-row"><label>Nhập curl.txt<input id="curlFile" type="file" accept=".txt"></label><button id="saveCurl">Lưu cấu hình</button></div><div id="configState" class="config-state"></div></article>
         </div>
+        <article class="cache-settings"><div><small>HIỆU LỰC CACHE</small><h2>Không tải lại keyword vừa phân tích</h2><p class="muted">Nhập số phút muốn tái sử dụng kết quả. Đặt 0 để luôn quét và fetch lại.</p></div><div class="cache-control"><input id="cacheMinutes" type="number" min="0" max="43200" step="1" value="10"><span>phút</span><button id="saveCache">Lưu cache</button></div></article>
         <article class="danger-zone"><div><h3>Xóa dữ liệu phân tích</h3><p class="muted">Xóa toàn bộ kết quả đã lưu, không xóa keyword/cấu hình.</p></div><button id="clearResults" class="danger">Xóa kết quả</button></article>
       </section>
     </main>

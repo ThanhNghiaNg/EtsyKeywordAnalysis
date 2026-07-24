@@ -1,0 +1,35 @@
+.cache-settings {
+  margin-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cache-settings h2,
+.cache-settings p {
+  margin: 0;
+}
+
+.cache-settings p {
+  margin-top: 5px;
+}
+
+.cache-control {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.cache-control input {
+  width: 95px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.cache-control span {
+  font-size: 12px;
+  color: var(--muted);
+}

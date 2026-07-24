@@ -18,6 +18,12 @@ thu thập ID, đóng tab, rồi lấy dữ liệu SEO. Kết quả phân tích 
 lưu riêng từng keyword trong IndexedDB. `chrome.storage.local` chỉ giữ cấu hình
 và trạng thái tác vụ; curl hay token không được gửi tới nơi nào ngoài eRank.
 
+Mỗi lần tải Etsy hoặc fetch eRank được thử tối đa 3 lần với thời gian chờ tăng
+dần. Keyword vẫn lỗi sẽ được đưa xuống cuối queue để thử thêm một lượt; nếu vẫn
+lỗi, tác vụ ghi nhận lỗi và tiếp tục keyword khác. Thời gian cache được chỉnh
+trong **Cấu hình** (mặc định 10 phút, đặt 0 để tắt). Nút **Ngừng phân tích** ở
+dashboard sẽ đóng tab Etsy và hủy fetch đang chạy.
+
 ## Khi curl/phiên hết hạn
 
 Dashboard sẽ hiển thị thông báo bắt đầu bằng `CURL_EXPIRED`. Copy curl mới từ
