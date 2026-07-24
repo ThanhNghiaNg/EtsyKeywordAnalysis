@@ -199,8 +199,8 @@ function renderListings() {
   const listings = records.flatMap((record) => (record.data?.listings || []).map((listing) => ({ ...listing, _keyword: record.keyword })))
     .sort((a, b) => number(b.est_sales?.value) - number(a.est_sales?.value)).slice(0, 100);
   $("#listingGrid").innerHTML = listings.map((item) => `<div class="listing">
-    <img src="${escapeHtml(item.listing_image)}" alt="" loading="lazy">
-    <div class="listing-body"><h3 title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h3>
+    <a href="https://www.etsy.com/listing/${number(item.listing_id)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(item.listing_image)}" alt="" loading="lazy"></a>
+    <div class="listing-body"><h3 title="${escapeHtml(item.title)}"><a href="https://www.etsy.com/listing/${number(item.listing_id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h3>
     <p class="muted">${escapeHtml(item.shop_name)} · ${escapeHtml(item._keyword)}</p>
     <div class="listing-meta"><div><small>SALES</small><b>${fmt(number(item.est_sales?.value))}</b></div><div><small>REVENUE</small><b>${money(number(item.est_revenue?.value))}</b></div><div><small>PRICE</small><b>$${fmt(number(item.listing_price?.value), 2)}</b></div></div></div>
   </div>`).join("") || '<div class="empty">Chưa có dữ liệu listing.</div>';

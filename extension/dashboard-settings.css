@@ -91,3 +91,13 @@ th[data-tooltip]:focus .info-icon {
 .field-tooltip[hidden] {
   display: none;
 }
+
+.listing a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.listing h3 a:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
