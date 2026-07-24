@@ -12,6 +12,53 @@ const fmt = (value, digits = 0) => new Intl.NumberFormat("en-US", { maximumFract
 const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value || 0);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
+const HEADER_TOOLTIPS = {
+  keyword: `Từ khóa gốc được dùng để mở trang tìm kiếm Etsy và lấy dữ liệu thị trường.
+
+Ảnh hưởng SEO: Xác định cụm truy vấn mà title và tags cần liên quan. Từ khóa đúng ý định mua giúp listing xuất hiện trước đúng nhóm khách hàng và hỗ trợ chuyển đổi.`,
+  score: `Điểm Opportunity 1–100 do extension tự tính từ Searches, Clicks, Competition và CTR; đây không phải chỉ số chính thức của Etsy hoặc eRank.
+
+Ảnh hưởng SEO: Điểm cao gợi ý nhu cầu tốt so với cạnh tranh. Nó giúp ưu tiên keyword để thử nghiệm, nhưng không đảm bảo thứ hạng hoặc doanh số.`,
+  searches: `Số lượt tìm kiếm trung bình của keyword theo dữ liệu eRank.
+
+Ảnh hưởng SEO: Search cao cho thấy nhu cầu lớn và tiềm năng impressions cao hơn. Tuy nhiên, chuyển đổi chỉ tốt khi keyword khớp chính xác sản phẩm và ý định mua.`,
+  clicks: `Số lượt click trung bình phát sinh từ các lượt tìm kiếm keyword theo dữ liệu eRank.
+
+Ảnh hưởng SEO: Click cao cho thấy kết quả tìm kiếm tạo được sự quan tâm. Thumbnail, title, giá và độ liên quan quyết định listing có nhận được phần click và chuyển đổi hay không.`,
+  competition: `Số lượng listing cạnh tranh cho keyword theo dữ liệu eRank.
+
+Ảnh hưởng SEO: Competition cao thường khiến việc đạt vị trí nổi bật khó hơn. Thị trường ngách cạnh tranh thấp có thể dễ lấy impressions và đơn hàng hơn nếu vẫn có đủ nhu cầu.`,
+  ctr: `Tỷ lệ Clicks so với Searches. Chỉ số có thể vượt 100% khi một lượt tìm kiếm tạo nhiều click.
+
+Ảnh hưởng SEO: CTR cao thể hiện người tìm kiếm thường tương tác với kết quả. Đây là tín hiệu về ý định và sức hút thị trường, nhưng không đồng nghĩa trực tiếp với tỷ lệ mua hàng.`,
+  exactTag: `Số listing trong mẫu kết quả sử dụng chính xác keyword trong danh sách tags, hiển thị theo dạng số khớp / tổng listing.
+
+Ảnh hưởng SEO: Tỷ lệ cao cho thấy đối thủ xem keyword là tag quan trọng và mức tối ưu trực tiếp cao. Điều này tăng độ liên quan nhưng cũng báo hiệu cạnh tranh SEO mạnh hơn.`,
+  titleMatch: `Số listing trong mẫu có chứa nguyên cụm keyword trong title, hiển thị theo dạng số khớp / tổng listing.
+
+Ảnh hưởng SEO: Title match giúp Etsy và người mua hiểu nhanh độ liên quan. Title tự nhiên, đúng sản phẩm có thể cải thiện click và chuyển đổi; nhồi từ khóa có thể làm title khó đọc và giảm click.`,
+  revenue: `Tổng doanh thu ước tính của các listing được phân tích cho keyword, dựa trên dữ liệu eRank.
+
+Ảnh hưởng SEO: Không tác động trực tiếp tới thứ hạng. Nó phản ánh giá trị thương mại và bằng chứng chuyển đổi của thị trường; đây là số ước tính, không phải doanh thu xác nhận.`,
+  tag: `Cụm từ liên quan xuất hiện trong tags của các listing thuộc kết quả phân tích.
+
+Ảnh hưởng SEO: Tag sát sản phẩm giúp Etsy kết nối listing với nhiều truy vấn liên quan. Chỉ dùng tag phù hợp ý định; tag rộng nhưng không liên quan có thể tạo traffic kém chuyển đổi.`,
+  source: `Keyword gốc mà từ đó extension phát hiện tag liên quan.
+
+Ảnh hưởng SEO: Không phải chỉ số xếp hạng. Nó cung cấp ngữ cảnh để đánh giá tag có thực sự liên quan tới thị trường và sản phẩm mục tiêu hay không.`,
+  tagOpportunity: `Điểm 1–100 do extension tự tính cho tag từ Searches, Clicks và Competition.
+
+Ảnh hưởng SEO: Điểm cao gợi ý tag có nhu cầu tốt so với cạnh tranh. Cần kết hợp độ liên quan sản phẩm vì traffic sai ý định thường không tạo chuyển đổi.`,
+  occurrences: `Số lần tag xuất hiện trong các listing thuộc mẫu kết quả eRank.
+
+Ảnh hưởng SEO: Occurrences cao cho thấy tag phổ biến và đã được nhiều đối thủ xác nhận. Đồng thời, nó có thể báo hiệu mức cạnh tranh tối ưu cao hơn; không nên sao chép nếu tag không đúng sản phẩm.`
+};
+
+function headerCell(label, tooltipKey, numeric = false) {
+  const tooltip = HEADER_TOOLTIPS[tooltipKey] || "";
+  return `<th class="${numeric ? "num" : ""}" tabindex="0" data-tooltip="${escapeHtml(tooltip)}"><span>${escapeHtml(label)}</span><i class="info-icon" aria-hidden="true">i</i></th>`;
+}
+
 let allResults = {};
 
 async function reloadResults() {
@@ -115,12 +162,25 @@ function renderScatter(rows) {
 function tableMarkup(rows, compact = false) {
   const body = rows.map((row) => `<tr>
     <td><b>${escapeHtml(row.keyword)}</b></td>
-    <td><span class="score ${scoreClass(row.score)}">${row.score}</span></td>
+    <td class="num"><span class="score ${scoreClass(row.score)}">${row.score}</span></td>
     <td class="num">${fmt(row.searches)}</td><td class="num">${fmt(row.clicks)}</td>
     <td class="num">${fmt(row.competition)}</td><td class="num">${fmt(row.ctr, 1)}%</td>
     ${compact ? "" : `<td class="num">${row.exactTag}/${row.listings}</td><td class="num">${row.titleMatch}/${row.listings}</td><td class="num">${money(row.revenue)}</td>`}
   </tr>`).join("");
-  return `<thead><tr><th>Keyword</th><th>Score</th><th>Searches</th><th>Clicks</th><th>Competition</th><th>CTR</th>${compact ? "" : "<th>Exact tag</th><th>Title match</th><th>Est. revenue</th>"}</tr></thead><tbody>${body || '<tr><td colspan="9">Chưa có dữ liệu.</td></tr>'}</tbody>`;
+  const headers = [
+    headerCell("Keyword", "keyword"),
+    headerCell("Score", "score", true),
+    headerCell("Searches", "searches", true),
+    headerCell("Clicks", "clicks", true),
+    headerCell("Competition", "competition", true),
+    headerCell("CTR", "ctr", true),
+    ...(compact ? [] : [
+      headerCell("Exact tag", "exactTag", true),
+      headerCell("Title match", "titleMatch", true),
+      headerCell("Est. revenue", "revenue", true)
+    ])
+  ].join("");
+  return `<thead><tr>${headers}</tr></thead><tbody>${body || '<tr><td colspan="9">Chưa có dữ liệu.</td></tr>'}</tbody>`;
 }
 
 function renderKeywordTable() {
@@ -162,8 +222,18 @@ function renderTags() {
     const opportunity = Math.max(1, Math.min(100, Math.round(55 + Math.log10(searches + clicks + 10) * 18 - Math.log10(competition + 10) * 11)));
     return { ...tag, searches, clicks, competition, opportunity };
   }).sort((a, b) => b.opportunity - a.opportunity || b.searches - a.searches).slice(0, 150);
-  $("#tagTable").innerHTML = `<thead><tr><th>Tag</th><th>Nguồn</th><th>Opportunity</th><th>Occurrences</th><th>Searches</th><th>Clicks</th><th>Competition</th><th>CTR</th></tr></thead><tbody>${rows.map((tag) => `<tr>
-    <td><b>${escapeHtml(tag.keyword)}</b></td><td>${escapeHtml(tag._source)}</td><td><span class="score ${scoreClass(tag.opportunity)}">${tag.opportunity}</span></td>
+  const headers = [
+    headerCell("Tag", "tag"),
+    headerCell("Nguồn", "source"),
+    headerCell("Opportunity", "tagOpportunity", true),
+    headerCell("Occurrences", "occurrences", true),
+    headerCell("Searches", "searches", true),
+    headerCell("Clicks", "clicks", true),
+    headerCell("Competition", "competition", true),
+    headerCell("CTR", "ctr", true)
+  ].join("");
+  $("#tagTable").innerHTML = `<thead><tr>${headers}</tr></thead><tbody>${rows.map((tag) => `<tr>
+    <td><b>${escapeHtml(tag.keyword)}</b></td><td>${escapeHtml(tag._source)}</td><td class="num"><span class="score ${scoreClass(tag.opportunity)}">${tag.opportunity}</span></td>
     <td class="num">${fmt(number(tag.occurences))}</td><td class="num">${fmt(tag.searches)}</td><td class="num">${fmt(tag.clicks)}</td><td class="num">${fmt(tag.competition)}</td><td class="num">${fmt(number(tag.ctr?.value), 1)}%</td>
   </tr>`).join("") || '<tr><td colspan="8">Chưa có dữ liệu tag.</td></tr>'}</tbody>`;
 }
@@ -180,6 +250,52 @@ function renderAll() {
   renderListings();
   renderTags();
 }
+
+const fieldTooltip = document.createElement("div");
+fieldTooltip.className = "field-tooltip";
+fieldTooltip.setAttribute("role", "tooltip");
+fieldTooltip.hidden = true;
+document.body.appendChild(fieldTooltip);
+
+function showFieldTooltip(header) {
+  const text = header?.dataset.tooltip;
+  if (!text) return;
+  fieldTooltip.textContent = text;
+  fieldTooltip.hidden = false;
+  fieldTooltip.dataset.owner = header.textContent.trim();
+  const rect = header.getBoundingClientRect();
+  const tooltipRect = fieldTooltip.getBoundingClientRect();
+  const margin = 10;
+  let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin));
+  let top = rect.bottom + 9;
+  if (top + tooltipRect.height > window.innerHeight - margin) top = rect.top - tooltipRect.height - 9;
+  fieldTooltip.style.left = `${left}px`;
+  fieldTooltip.style.top = `${Math.max(margin, top)}px`;
+}
+
+function hideFieldTooltip() {
+  fieldTooltip.hidden = true;
+  delete fieldTooltip.dataset.owner;
+}
+
+document.addEventListener("pointerover", (event) => {
+  const header = event.target.closest?.("th[data-tooltip]");
+  if (header) showFieldTooltip(header);
+});
+document.addEventListener("pointerout", (event) => {
+  const header = event.target.closest?.("th[data-tooltip]");
+  if (header && !header.contains(event.relatedTarget)) hideFieldTooltip();
+});
+document.addEventListener("focusin", (event) => {
+  const header = event.target.closest?.("th[data-tooltip]");
+  if (header) showFieldTooltip(header);
+});
+document.addEventListener("focusout", (event) => {
+  if (event.target.closest?.("th[data-tooltip]")) hideFieldTooltip();
+});
+window.addEventListener("scroll", hideFieldTooltip, true);
+window.addEventListener("resize", hideFieldTooltip);
 
 function paintJob(state = {}) {
   const dot = $("#statusDot");

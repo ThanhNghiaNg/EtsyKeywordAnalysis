@@ -74,6 +74,19 @@ const dashboardHtml = fs.readFileSync(path.join(extension, "dashboard.html"), "u
 if (!/id="cacheMinutes"/.test(dashboardHtml) || !/id="stopBtn"/.test(dashboardHtml)) {
   throw new Error("Dashboard thiếu cấu hình cache hoặc nút dừng.");
 }
+const dashboardSource = fs.readFileSync(path.join(extension, "dashboard.js"), "utf8");
+for (const tooltipKey of [
+  "keyword", "score", "searches", "clicks", "competition", "ctr",
+  "exactTag", "titleMatch", "revenue", "tag", "source",
+  "tagOpportunity", "occurrences"
+]) {
+  if (!new RegExp(`\\n\\s*${tooltipKey}:\\s*\\x60`).test(dashboardSource)) {
+    throw new Error(`Thiếu nội dung tooltip cho header ${tooltipKey}.`);
+  }
+}
+if (!/function headerCell\(/.test(dashboardSource) || !/data-tooltip=/.test(dashboardSource)) {
+  throw new Error("Header bảng chưa sử dụng tooltip dùng chung.");
+}
 
 const { compactAnalysisRecord } = await import(path.join(extension, "data-store.js"));
 const sampleRecord = {
