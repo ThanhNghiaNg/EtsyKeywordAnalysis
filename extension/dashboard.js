@@ -5,6 +5,7 @@ import {
   migrateLegacyResults
 } from "./data-store.js";
 import { cycleSortRules, sortRows } from "./table-sort.js";
+import { collectListingItems } from "./listing-utils.js";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -99,6 +100,7 @@ Sắp xếp: Bấm để chuyển Idle → Tăng dần → Giảm dần → Idle
 }
 
 let allResults = {};
+let listingDetailsByKey = new Map();
 
 async function reloadResults() {
   const records = await getAllAnalysisResults();
@@ -244,14 +246,78 @@ function setSelectOptions(element, includeAll = false) {
 function renderListings() {
   const filter = $("#listingFilter").value;
   const records = filter ? [allResults[filter]].filter(Boolean) : Object.values(allResults);
-  const listings = records.flatMap((record) => (record.data?.listings || []).map((listing) => ({ ...listing, _keyword: record.keyword })))
+  const listings = collectListingItems(records, !filter)
     .sort((a, b) => number(b.est_sales?.value) - number(a.est_sales?.value)).slice(0, 100);
-  $("#listingGrid").innerHTML = listings.map((item) => `<div class="listing">
-    <a href="https://www.etsy.com/listing/${number(item.listing_id)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(item.listing_image)}" alt="" loading="lazy"></a>
-    <div class="listing-body"><h3 title="${escapeHtml(item.title)}"><a href="https://www.etsy.com/listing/${number(item.listing_id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h3>
-    <p class="muted">${escapeHtml(item.shop_name)} · ${escapeHtml(item._keyword)}</p>
+  listingDetailsByKey = new Map();
+  $("#listingGrid").innerHTML = listings.map((item, index) => {
+    const detailKey = `${number(item.listing_id) || "listing"}-${index}`;
+    listingDetailsByKey.set(detailKey, item);
+    return `<div class="listing" role="button" tabindex="0" data-listing-detail="${detailKey}" aria-label="Xem chi tiết eRank của ${escapeHtml(item.title)}">
+    <img src="${escapeHtml(item.listing_image)}" alt="" loading="lazy">
+    <div class="listing-body"><h3 title="${escapeHtml(item.title)}"><a data-etsy-link href="https://www.etsy.com/listing/${number(item.listing_id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h3>
+    <p class="muted">${escapeHtml(item.shop_name)} · ${escapeHtml(item._keywords.join(", "))}</p>
     <div class="listing-meta"><div><small>SALES</small><b>${fmt(number(item.est_sales?.value))}</b></div><div><small>REVENUE</small><b>${money(number(item.est_revenue?.value))}</b></div><div><small>PRICE</small><b>$${fmt(number(item.listing_price?.value), 2)}</b></div></div></div>
-  </div>`).join("") || '<div class="empty">Chưa có dữ liệu listing.</div>';
+  </div>`;
+  }).join("") || '<div class="empty">Chưa có dữ liệu listing.</div>';
+}
+
+function metricLabel(metricValue, formatter = fmt) {
+  if (metricValue?.label) return String(metricValue.label);
+  return formatter(number(metricValue?.value));
+}
+
+function detailMetric(label, value) {
+  return `<div class="detail-metric"><small>${escapeHtml(label)}</small><b>${escapeHtml(value ?? "—")}</b></div>`;
+}
+
+function openListingDetail(detailKey) {
+  const item = listingDetailsByKey.get(detailKey);
+  if (!item) return;
+  const listingId = number(item.listing_id);
+  const etsyUrl = `https://www.etsy.com/listing/${listingId}`;
+  const rawListing = Object.fromEntries(
+    Object.entries(item).filter(([key]) => !key.startsWith("_"))
+  );
+  const computedSales = item.est_sales?.computed_sales;
+  const computedRevenue = item.est_revenue?.computed_revenue;
+  const computedRate = item.est_conversion_rate?.computed_rate;
+  const metrics = [
+    ["Views", fmt(number(item.views))],
+    ["Favorers", fmt(number(item.favorers))],
+    ["Estimated sales", metricLabel(item.est_sales)],
+    ["Computed sales", computedSales == null ? "—" : fmt(number(computedSales))],
+    ["Estimated revenue", metricLabel(item.est_revenue, money)],
+    ["Computed revenue", computedRevenue == null ? "—" : money(number(computedRevenue))],
+    ["Conversion rate", metricLabel(item.est_conversion_rate)],
+    ["Computed conversion", computedRate == null ? "—" : `${fmt(number(computedRate), 2)}%`],
+    ["Listing price", metricLabel(item.listing_price, (value) => `$${fmt(value, 2)}`)],
+    ["Original price", metricLabel(item.orig_listing_price, (value) => `$${fmt(value, 2)}`)],
+    ["is_converted", item.is_converted ? "true" : "false"],
+    ["Listing ID", String(listingId)]
+  ];
+  $("#listingDetailContent").innerHTML = `
+    <div class="detail-hero">
+      <img src="${escapeHtml(item.listing_image)}" alt="">
+      <div>
+        <small>ERANK LISTING DETAIL</small>
+        <h2 id="listingDetailTitle"><a href="${etsyUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h2>
+        <p><b>${escapeHtml(item.shop_name)}</b></p>
+        <p class="muted">Xuất hiện trong: ${escapeHtml(item._keywords.join(", "))}</p>
+        <p class="muted">Thu thập lúc: ${item._collectedAt ? escapeHtml(new Date(item._collectedAt).toLocaleString("vi-VN")) : "—"}</p>
+      </div>
+    </div>
+    <div class="detail-metrics">${metrics.map(([label, value]) => detailMetric(label, value)).join("")}</div>
+    <div class="detail-section">
+      <h3>Tags (${item.tags?.length || 0})</h3>
+      <div class="tag-chips">${(item.tags || []).map((tag) => `<span class="tag-chip">${escapeHtml(tag)}</span>`).join("") || '<span class="muted">Không có tags.</span>'}</div>
+    </div>
+    <div class="detail-section raw-details">
+      <details>
+        <summary>Xem toàn bộ dữ liệu eRank đã lưu</summary>
+        <pre>${escapeHtml(JSON.stringify(rawListing, null, 2))}</pre>
+      </details>
+    </div>`;
+  $("#listingDetailModal").showModal();
 }
 
 function renderTags() {
@@ -474,6 +540,23 @@ $("#clearResults").addEventListener("click", async () => {
 });
 $("#listingFilter").addEventListener("change", renderListings);
 $("#tagFilter").addEventListener("change", renderTags);
+$("#listingGrid").addEventListener("click", (event) => {
+  if (event.target.closest("[data-etsy-link]")) return;
+  const card = event.target.closest("[data-listing-detail]");
+  if (card) openListingDetail(card.dataset.listingDetail);
+});
+$("#listingGrid").addEventListener("keydown", (event) => {
+  if (event.target.closest("[data-etsy-link]")) return;
+  const card = event.target.closest("[data-listing-detail]");
+  if (card && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    openListingDetail(card.dataset.listingDetail);
+  }
+});
+$("#closeListingDetail").addEventListener("click", () => $("#listingDetailModal").close());
+$("#listingDetailModal").addEventListener("click", (event) => {
+  if (event.target === $("#listingDetailModal")) $("#listingDetailModal").close();
+});
 $("#exportBtn").addEventListener("click", () => {
   const blob = new Blob([JSON.stringify(allResults, null, 2)], { type: "application/json" });
   const link = document.createElement("a"); link.href = URL.createObjectURL(blob);

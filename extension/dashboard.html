@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="stylesheet" href="dashboard.css">
     <link rel="stylesheet" href="dashboard-settings.css">
+    <link rel="stylesheet" href="dashboard-listing-modal.css">
     <title>Etsy SEO Analyst</title>
   </head>
   <body>
@@ -49,6 +50,12 @@
         <article class="danger-zone"><div><h3>Xóa dữ liệu phân tích</h3><p class="muted">Xóa toàn bộ kết quả đã lưu, không xóa keyword/cấu hình.</p></div><button id="clearResults" class="danger">Xóa kết quả</button></article>
       </section>
     </main>
+    <dialog id="listingDetailModal" aria-labelledby="listingDetailTitle">
+      <div class="modal-shell">
+        <button id="closeListingDetail" class="modal-close" aria-label="Đóng">×</button>
+        <div id="listingDetailContent"></div>
+      </div>
+    </dialog>
     <script type="module" src="dashboard.js"></script>
   </body>
 </html>

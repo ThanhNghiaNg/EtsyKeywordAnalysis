@@ -7,7 +7,8 @@ const extension = path.join(root, "extension");
 const required = [
   "manifest.json", "background.js", "scraper.js", "popup.html", "popup.js",
   "popup.css", "dashboard.html", "dashboard.js", "dashboard.css",
-  "dashboard-settings.css", "default-keywords.js", "data-store.js", "table-sort.js"
+  "dashboard-settings.css", "dashboard-listing-modal.css", "default-keywords.js",
+  "data-store.js", "table-sort.js", "listing-utils.js"
 ];
 
 for (const file of required) {
@@ -41,7 +42,10 @@ for (const header of ["authorization", "x-device-id", "x-signature", "x-timestam
 }
 if (!/"endpoint"\s*:\s*"ext\/listing-ids"/.test(curlText)) throw new Error("curl.txt sai endpoint.");
 
-for (const file of ["background.js", "scraper.js", "popup.js", "dashboard.js", "data-store.js", "table-sort.js"]) {
+for (const file of [
+  "background.js", "scraper.js", "popup.js", "dashboard.js",
+  "data-store.js", "table-sort.js", "listing-utils.js"
+]) {
   const source = fs.readFileSync(path.join(extension, file), "utf8")
     .replace(/import[\s\S]*?from\s+["'][^"']+["'];\s*/g, "")
     .replace(/^export\s+/gm, "");
@@ -90,9 +94,13 @@ if (!/function headerCell\(/.test(dashboardSource) || !/data-tooltip=/.test(dash
 if (!/data-sort-key=/.test(dashboardSource) || !/cycleHeaderSort/.test(dashboardSource)) {
   throw new Error("Header bảng chưa hỗ trợ tương tác multi-sort.");
 }
+if (!/id="listingDetailModal"/.test(dashboardHtml) || !/collectListingItems/.test(dashboardSource)) {
+  throw new Error("Top Listings thiếu modal chi tiết hoặc cơ chế chống trùng.");
+}
 
 const { compactAnalysisRecord } = await import(path.join(extension, "data-store.js"));
 const { cycleSortRules, sortRows } = await import(path.join(extension, "table-sort.js"));
+const { collectListingItems } = await import(path.join(extension, "listing-utils.js"));
 const sampleRecord = {
   keyword: "sample keyword",
   listingIds: [1, 1, 2],
@@ -122,11 +130,26 @@ if (compact.data.popular_tags.length !== 250) throw new Error("Giới hạn popu
 if (!compact.data.popular_tags.some((tag) => tag.keyword === "sample keyword")) {
   throw new Error("Keyword chính bị mất khi rút gọn popular tags.");
 }
-if (JSON.stringify(compact).includes("gauge") || JSON.stringify(compact).includes("computed_revenue")) {
-  throw new Error("Dữ liệu trình bày dư thừa chưa được loại bỏ.");
+if (JSON.stringify(compact.data.popular_tags).includes("gauge")) {
+  throw new Error("Dữ liệu gauge dư thừa của popular tags chưa được loại bỏ.");
 }
 if (compact.listingIds.length !== 2 || compact.data.listings[0].views !== 1200) {
   throw new Error("Chuẩn hóa dữ liệu listing không chính xác.");
+}
+if (compact.data.listings[0].est_revenue.computed_revenue !== 999999) {
+  throw new Error("Dữ liệu chi tiết eRank của listing chưa được giữ đầy đủ.");
+}
+
+const mergedListings = collectListingItems([
+  { keyword: "alpha", collectedAt: 100, data: { listings: [{ listing_id: 7, title: "Old" }] } },
+  { keyword: "beta", collectedAt: 200, data: { listings: [{ listing_id: 7, title: "New" }, { listing_id: 8, title: "Other" }] } }
+], true);
+if (
+  mergedListings.length !== 2
+  || mergedListings[0].title !== "New"
+  || mergedListings[0]._keywords.join(",") !== "alpha,beta"
+) {
+  throw new Error("Chống trùng Top Listings không gộp đúng listing_id, keyword hoặc dữ liệu mới nhất.");
 }
 
 let sortRules = cycleSortRules([], "a", "number");

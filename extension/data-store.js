@@ -28,6 +28,7 @@ function compactTrend(trend) {
 
 function compactListing(listing) {
   return {
+    ...listing,
     listing_id: numeric(listing.listing_id),
     title: String(listing.title || ""),
     listing_image: String(listing.listing_image || ""),
@@ -35,11 +36,11 @@ function compactListing(listing) {
     favorers: numeric(listing.favorers),
     shop_name: String(listing.shop_name || ""),
     tags: Array.isArray(listing.tags) ? listing.tags.map(String).slice(0, 13) : [],
-    est_sales: metric(listing.est_sales),
-    est_revenue: metric(listing.est_revenue),
-    est_conversion_rate: metric(listing.est_conversion_rate),
-    listing_price: metric(listing.listing_price),
-    orig_listing_price: metric(listing.orig_listing_price),
+    est_sales: { ...(listing.est_sales || {}), ...metric(listing.est_sales) },
+    est_revenue: { ...(listing.est_revenue || {}), ...metric(listing.est_revenue) },
+    est_conversion_rate: { ...(listing.est_conversion_rate || {}), ...metric(listing.est_conversion_rate) },
+    listing_price: { ...(listing.listing_price || {}), ...metric(listing.listing_price) },
+    orig_listing_price: { ...(listing.orig_listing_price || {}), ...metric(listing.orig_listing_price) },
     is_converted: Boolean(listing.is_converted)
   };
 }
