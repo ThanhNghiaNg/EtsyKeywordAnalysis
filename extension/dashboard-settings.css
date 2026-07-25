@@ -131,6 +131,95 @@ th[data-tooltip]:focus .info-icon {
   display: none;
 }
 
+.multi-combobox {
+  position: relative;
+  min-width: 220px;
+}
+
+.combo-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 310px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+  text-align: left;
+}
+
+.combo-trigger span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.combo-trigger b {
+  margin-left: 12px;
+  color: var(--muted);
+}
+
+.combo-menu {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(330px, calc(100vw - 40px));
+  max-height: 310px;
+  overflow: auto;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 14px 36px #102f2d2b;
+}
+
+.combo-menu[hidden] {
+  display: none;
+}
+
+.combo-option {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px;
+  border-radius: 7px;
+  color: #294641;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.combo-option:hover {
+  background: #eff5f2;
+}
+
+.combo-option input {
+  flex: 0 0 auto;
+  margin: 1px 0 0;
+  accent-color: var(--green);
+}
+
+.combo-option span {
+  line-height: 1.35;
+}
+
+.combo-all {
+  font-weight: 750;
+}
+
+.combo-divider {
+  height: 1px;
+  margin: 4px 7px;
+  background: var(--line);
+}
+
+.combo-empty {
+  padding: 11px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .listing a {
   color: inherit;
   text-decoration: none;

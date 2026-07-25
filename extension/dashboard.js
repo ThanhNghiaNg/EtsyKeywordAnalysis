@@ -101,6 +101,10 @@ Sắp xếp: Bấm để chuyển Idle → Tăng dần → Giảm dần → Idle
 
 let allResults = {};
 let listingDetailsByKey = new Map();
+const filterSelections = {
+  listingFilter: new Set(),
+  tagFilter: new Set()
+};
 
 async function reloadResults() {
   const records = await getAllAnalysisResults();
@@ -237,16 +241,40 @@ function renderKeywordTable() {
   );
 }
 
-function setSelectOptions(element, includeAll = false) {
+function selectedRecords(filterId) {
+  const selected = filterSelections[filterId];
+  if (!selected?.size) return Object.values(allResults);
+  return [...selected].map((keyword) => allResults[keyword]).filter(Boolean);
+}
+
+function comboboxLabel(selected) {
+  if (!selected.size) return "Tất cả keywords";
+  if (selected.size === 1) return [...selected][0];
+  return `${selected.size} keywords đã chọn`;
+}
+
+function renderCombobox(element) {
   const keys = Object.keys(allResults);
-  element.innerHTML = (includeAll ? '<option value="">Tất cả keywords</option>' : "") +
-    keys.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`).join("");
+  const selected = filterSelections[element.id];
+  for (const keyword of [...selected]) {
+    if (!allResults[keyword]) selected.delete(keyword);
+  }
+  const menuId = `${element.id}Menu`;
+  element.innerHTML = `
+    <button type="button" class="combo-trigger" role="combobox" aria-expanded="false" aria-controls="${menuId}">
+      <span>${escapeHtml(comboboxLabel(selected))}</span><b aria-hidden="true">⌄</b>
+    </button>
+    <div id="${menuId}" class="combo-menu" role="listbox" aria-multiselectable="true" hidden>
+      <label class="combo-option combo-all"><input type="checkbox" data-filter-all ${selected.size ? "" : "checked"}><span>Tất cả keywords</span></label>
+      <div class="combo-divider"></div>
+      ${keys.map((key, index) => `<label class="combo-option" role="option" aria-selected="${selected.has(key)}"><input type="checkbox" value="${escapeHtml(key)}" data-filter-keyword ${selected.has(key) ? "checked" : ""}><span>${escapeHtml(key)}</span></label>`).join("") || '<div class="combo-empty">Chưa có dữ liệu keyword.</div>'}
+    </div>`;
 }
 
 function renderListings() {
-  const filter = $("#listingFilter").value;
-  const records = filter ? [allResults[filter]].filter(Boolean) : Object.values(allResults);
-  const listings = collectListingItems(records, !filter)
+  const selected = filterSelections.listingFilter;
+  const records = selectedRecords("listingFilter");
+  const listings = collectListingItems(records, selected.size !== 1)
     .sort((a, b) => number(b.est_sales?.value) - number(a.est_sales?.value)).slice(0, 100);
   listingDetailsByKey = new Map();
   $("#listingGrid").innerHTML = listings.map((item, index) => {
@@ -321,20 +349,28 @@ function openListingDetail(detailKey) {
 }
 
 function renderTags() {
-  const selected = $("#tagFilter").value;
-  const records = selected ? [allResults[selected]].filter(Boolean) : Object.values(allResults);
+  const records = selectedRecords("tagFilter");
   const tags = records.flatMap((record) => (record.data?.popular_tags || []).map((tag) => ({ ...tag, _source: record.keyword })));
   const deduped = new Map();
   for (const tag of tags) {
     const key = tag.keyword?.toLowerCase();
     if (!key) continue;
     const prior = deduped.get(key);
-    if (!prior || number(tag.avg_searches?.value) > number(prior.avg_searches?.value)) deduped.set(key, tag);
+    if (!prior) {
+      deduped.set(key, { ...tag, _sources: [tag._source] });
+      continue;
+    }
+    const sources = [...new Set([...prior._sources, tag._source])];
+    if (number(tag.avg_searches?.value) > number(prior.avg_searches?.value)) {
+      deduped.set(key, { ...tag, _sources: sources });
+    } else {
+      prior._sources = sources;
+    }
   }
   const rows = [...deduped.values()].map((tag) => {
     const searches = number(tag.avg_searches?.value), clicks = number(tag.avg_clicks?.value), competition = number(tag.competition?.value);
     const opportunity = Math.max(1, Math.min(100, Math.round(55 + Math.log10(searches + clicks + 10) * 18 - Math.log10(competition + 10) * 11)));
-    return { ...tag, searches, clicks, competition, opportunity };
+    return { ...tag, _source: tag._sources.join(", "), searches, clicks, competition, opportunity };
   }).sort((a, b) => b.opportunity - a.opportunity || b.searches - a.searches).slice(0, 150);
   const sortedRows = sortRows(rows, tableSortStates.tagTable, tagSortAccessors);
   const headers = [
@@ -356,14 +392,66 @@ function renderTags() {
 function renderAll() {
   renderOverview();
   renderKeywordTable();
-  const previousListing = $("#listingFilter").value;
-  const previousTag = $("#tagFilter").value;
-  setSelectOptions($("#listingFilter"), true);
-  setSelectOptions($("#tagFilter"), true);
-  $("#listingFilter").value = previousListing;
-  $("#tagFilter").value = previousTag;
+  renderCombobox($("#listingFilter"));
+  renderCombobox($("#tagFilter"));
   renderListings();
   renderTags();
+}
+
+function updateComboboxDisplay(element) {
+  const selected = filterSelections[element.id];
+  element.querySelector(".combo-trigger span").textContent = comboboxLabel(selected);
+  const allInput = element.querySelector("[data-filter-all]");
+  if (allInput) allInput.checked = selected.size === 0;
+  element.querySelectorAll("[data-filter-keyword]").forEach((input) => {
+    input.checked = selected.has(input.value);
+    input.closest("[role='option']")?.setAttribute("aria-selected", String(input.checked));
+  });
+}
+
+function closeCombobox(element) {
+  const trigger = element.querySelector(".combo-trigger");
+  const menu = element.querySelector(".combo-menu");
+  if (!trigger || !menu) return;
+  trigger.setAttribute("aria-expanded", "false");
+  menu.hidden = true;
+}
+
+function closeOtherComboboxes(current) {
+  $$(".multi-combobox").forEach((element) => {
+    if (element !== current) closeCombobox(element);
+  });
+}
+
+function setupCombobox(element, onChange) {
+  element.addEventListener("click", (event) => {
+    const trigger = event.target.closest(".combo-trigger");
+    if (!trigger) return;
+    const menu = element.querySelector(".combo-menu");
+    const opening = menu.hidden;
+    closeOtherComboboxes(element);
+    menu.hidden = !opening;
+    trigger.setAttribute("aria-expanded", String(opening));
+  });
+  element.addEventListener("change", (event) => {
+    const selected = filterSelections[element.id];
+    if (event.target.matches("[data-filter-all]")) {
+      selected.clear();
+    } else if (event.target.matches("[data-filter-keyword]")) {
+      if (event.target.checked) selected.add(event.target.value);
+      else selected.delete(event.target.value);
+    } else {
+      return;
+    }
+    updateComboboxDisplay(element);
+    onChange();
+  });
+  element.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeCombobox(element);
+      element.querySelector(".combo-trigger")?.focus();
+    }
+  });
 }
 
 const fieldTooltip = document.createElement("div");
@@ -538,8 +626,13 @@ $("#clearResults").addEventListener("click", async () => {
   await clearAnalysisResults();
   allResults = {}; renderAll();
 });
-$("#listingFilter").addEventListener("change", renderListings);
-$("#tagFilter").addEventListener("change", renderTags);
+setupCombobox($("#listingFilter"), renderListings);
+setupCombobox($("#tagFilter"), renderTags);
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".multi-combobox")) {
+    $$(".multi-combobox").forEach(closeCombobox);
+  }
+});
 $("#listingGrid").addEventListener("click", (event) => {
   if (event.target.closest("[data-etsy-link]")) return;
   const card = event.target.closest("[data-listing-detail]");

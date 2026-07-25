@@ -38,6 +38,10 @@ tiếp. Các kết quả keyword đã thu thập vẫn được giữ và tác v
 - Listing benchmark: sales, revenue, price ước tính của listings nổi bật.
 - Tag opportunities: các tag liên quan được xếp theo nhu cầu so với cạnh tranh.
 
+Top Listings và Tag opportunities có multi-select combobox để gộp một tập
+keyword tùy chọn. Khi gộp, listings được chống trùng theo `listing_id` và tag
+trùng giữ lại danh sách các keyword nguồn.
+
 Opportunity score là chỉ số so sánh tương đối trong bộ keyword, không phải cam
 kết doanh số.
 

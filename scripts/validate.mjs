@@ -97,6 +97,13 @@ if (!/data-sort-key=/.test(dashboardSource) || !/cycleHeaderSort/.test(dashboard
 if (!/id="listingDetailModal"/.test(dashboardHtml) || !/collectListingItems/.test(dashboardSource)) {
   throw new Error("Top Listings thiếu modal chi tiết hoặc cơ chế chống trùng.");
 }
+if (
+  (dashboardHtml.match(/class="multi-combobox"/g) || []).length !== 2
+  || !/aria-multiselectable="true"/.test(dashboardSource)
+  || !/filterSelections/.test(dashboardSource)
+) {
+  throw new Error("Top Listings và Tags chưa dùng multi-select combobox.");
+}
 
 const { compactAnalysisRecord } = await import(path.join(extension, "data-store.js"));
 const { cycleSortRules, sortRows } = await import(path.join(extension, "table-sort.js"));
