@@ -7,7 +7,7 @@ const extension = path.join(root, "extension");
 const required = [
   "manifest.json", "background.js", "scraper.js", "popup.html", "popup.js",
   "popup.css", "dashboard.html", "dashboard.js", "dashboard.css",
-  "dashboard-settings.css", "default-keywords.js", "data-store.js"
+  "dashboard-settings.css", "default-keywords.js", "data-store.js", "table-sort.js"
 ];
 
 for (const file of required) {
@@ -41,7 +41,7 @@ for (const header of ["authorization", "x-device-id", "x-signature", "x-timestam
 }
 if (!/"endpoint"\s*:\s*"ext\/listing-ids"/.test(curlText)) throw new Error("curl.txt sai endpoint.");
 
-for (const file of ["background.js", "scraper.js", "popup.js", "dashboard.js", "data-store.js"]) {
+for (const file of ["background.js", "scraper.js", "popup.js", "dashboard.js", "data-store.js", "table-sort.js"]) {
   const source = fs.readFileSync(path.join(extension, file), "utf8")
     .replace(/import[\s\S]*?from\s+["'][^"']+["'];\s*/g, "")
     .replace(/^export\s+/gm, "");
@@ -87,8 +87,12 @@ for (const tooltipKey of [
 if (!/function headerCell\(/.test(dashboardSource) || !/data-tooltip=/.test(dashboardSource)) {
   throw new Error("Header bảng chưa sử dụng tooltip dùng chung.");
 }
+if (!/data-sort-key=/.test(dashboardSource) || !/cycleHeaderSort/.test(dashboardSource)) {
+  throw new Error("Header bảng chưa hỗ trợ tương tác multi-sort.");
+}
 
 const { compactAnalysisRecord } = await import(path.join(extension, "data-store.js"));
+const { cycleSortRules, sortRows } = await import(path.join(extension, "table-sort.js"));
 const sampleRecord = {
   keyword: "sample keyword",
   listingIds: [1, 1, 2],
@@ -123,6 +127,23 @@ if (JSON.stringify(compact).includes("gauge") || JSON.stringify(compact).include
 }
 if (compact.listingIds.length !== 2 || compact.data.listings[0].views !== 1200) {
   throw new Error("Chuẩn hóa dữ liệu listing không chính xác.");
+}
+
+let sortRules = cycleSortRules([], "a", "number");
+sortRules = cycleSortRules(sortRules, "b", "number");
+sortRules = cycleSortRules(sortRules, "b", "number");
+const sorted = sortRows([
+  { id: "first", a: 2, b: 1 },
+  { id: "second", a: 1, b: 2 },
+  { id: "third", a: 1, b: 5 },
+  { id: "fourth", a: 2, b: 9 }
+], sortRules);
+if (sorted.map((row) => row.id).join(",") !== "third,second,fourth,first") {
+  throw new Error("Multi-sort không giữ đúng ưu tiên A tăng dần rồi B giảm dần.");
+}
+sortRules = cycleSortRules(sortRules, "b", "number");
+if (sortRules.length !== 1 || sortRules[0].key !== "a") {
+  throw new Error("Chu kỳ sort không trở về idle hoặc không đánh lại thứ tự ưu tiên.");
 }
 
 console.log(`OK: Manifest V3, ${sourceKeywords.length} keywords, curl hợp lệ, JavaScript đúng cú pháp.`);

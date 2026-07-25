@@ -43,6 +43,45 @@ th.num {
   text-align: right;
 }
 
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 16px;
+  margin-left: 5px;
+  color: #8b9996;
+  vertical-align: 0;
+}
+
+.sort-control b {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.sort-control em {
+  display: inline-grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--orange);
+  color: white;
+  font-size: 9px;
+  font-style: normal;
+  line-height: 1;
+}
+
+th.sortable[aria-sort="ascending"] .sort-control,
+th.sortable[aria-sort="descending"] .sort-control {
+  color: var(--green);
+}
+
 th[data-tooltip]:focus-visible {
   box-shadow: inset 0 0 0 2px #4ba196;
   border-radius: 5px;

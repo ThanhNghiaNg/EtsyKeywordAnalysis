@@ -4,6 +4,7 @@ import {
   getAllAnalysisResults,
   migrateLegacyResults
 } from "./data-store.js";
+import { cycleSortRules, sortRows } from "./table-sort.js";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -54,9 +55,47 @@ const HEADER_TOOLTIPS = {
 Ảnh hưởng SEO: Occurrences cao cho thấy tag phổ biến và đã được nhiều đối thủ xác nhận. Đồng thời, nó có thể báo hiệu mức cạnh tranh tối ưu cao hơn; không nên sao chép nếu tag không đúng sản phẩm.`
 };
 
-function headerCell(label, tooltipKey, numeric = false) {
-  const tooltip = HEADER_TOOLTIPS[tooltipKey] || "";
-  return `<th class="${numeric ? "num" : ""}" tabindex="0" data-tooltip="${escapeHtml(tooltip)}"><span>${escapeHtml(label)}</span><i class="info-icon" aria-hidden="true">i</i></th>`;
+const tableSortStates = {
+  overviewTable: [],
+  keywordTable: [],
+  tagTable: []
+};
+
+const keywordSortAccessors = {
+  keyword: (row) => row.keyword,
+  score: (row) => row.score,
+  searches: (row) => row.searches,
+  clicks: (row) => row.clicks,
+  competition: (row) => row.competition,
+  ctr: (row) => row.ctr,
+  exactTag: (row) => row.exactTag,
+  titleMatch: (row) => row.titleMatch,
+  revenue: (row) => row.revenue
+};
+
+const tagSortAccessors = {
+  keyword: (row) => row.keyword,
+  source: (row) => row._source,
+  opportunity: (row) => row.opportunity,
+  occurrences: (row) => number(row.occurences),
+  searches: (row) => row.searches,
+  clicks: (row) => row.clicks,
+  competition: (row) => row.competition,
+  ctr: (row) => number(row.ctr?.value)
+};
+
+function headerCell(label, tooltipKey, numeric = false, tableId = "", sortKey = "") {
+  const rules = tableSortStates[tableId] || [];
+  const ruleIndex = rules.findIndex((rule) => rule.key === sortKey);
+  const rule = rules[ruleIndex];
+  const tooltip = `${HEADER_TOOLTIPS[tooltipKey] || ""}
+
+Sắp xếp: Bấm để chuyển Idle → Tăng dần → Giảm dần → Idle. Có thể chọn nhiều cột; số hiển thị là thứ tự ưu tiên.`;
+  const sortMarkup = sortKey
+    ? `<span class="sort-control" aria-hidden="true"><b>${rule?.direction === "asc" ? "↑" : rule?.direction === "desc" ? "↓" : "↕"}</b>${rule ? `<em>${ruleIndex + 1}</em>` : ""}</span>`
+    : "";
+  const ariaSort = rule ? (rule.direction === "asc" ? "ascending" : "descending") : "none";
+  return `<th class="${numeric ? "num " : ""}${sortKey ? "sortable" : ""}" tabindex="0" data-tooltip="${escapeHtml(tooltip)}" data-sort-table="${tableId}" data-sort-key="${sortKey}" data-sort-type="${numeric ? "number" : "string"}" aria-sort="${ariaSort}"><span>${escapeHtml(label)}</span><i class="info-icon" aria-hidden="true">i</i>${sortMarkup}</th>`;
 }
 
 let allResults = {};
@@ -141,7 +180,11 @@ function renderOverview() {
     ).join("");
   }
   renderScatter(rows);
-  $("#overviewTable").innerHTML = tableMarkup(rows.slice().sort((a, b) => b.score - a.score), true);
+  $("#overviewTable").innerHTML = tableMarkup(
+    rows.slice().sort((a, b) => b.score - a.score),
+    true,
+    "overviewTable"
+  );
 }
 
 function renderScatter(rows) {
@@ -159,8 +202,9 @@ function renderScatter(rows) {
   }).join("") + '<span class="axis-label x">Competition →</span><span class="axis-label y">Search volume →</span>';
 }
 
-function tableMarkup(rows, compact = false) {
-  const body = rows.map((row) => `<tr>
+function tableMarkup(rows, compact = false, tableId = "keywordTable") {
+  const sortedRows = sortRows(rows, tableSortStates[tableId], keywordSortAccessors);
+  const body = sortedRows.map((row) => `<tr>
     <td><b>${escapeHtml(row.keyword)}</b></td>
     <td class="num"><span class="score ${scoreClass(row.score)}">${row.score}</span></td>
     <td class="num">${fmt(row.searches)}</td><td class="num">${fmt(row.clicks)}</td>
@@ -168,23 +212,27 @@ function tableMarkup(rows, compact = false) {
     ${compact ? "" : `<td class="num">${row.exactTag}/${row.listings}</td><td class="num">${row.titleMatch}/${row.listings}</td><td class="num">${money(row.revenue)}</td>`}
   </tr>`).join("");
   const headers = [
-    headerCell("Keyword", "keyword"),
-    headerCell("Score", "score", true),
-    headerCell("Searches", "searches", true),
-    headerCell("Clicks", "clicks", true),
-    headerCell("Competition", "competition", true),
-    headerCell("CTR", "ctr", true),
+    headerCell("Keyword", "keyword", false, tableId, "keyword"),
+    headerCell("Score", "score", true, tableId, "score"),
+    headerCell("Searches", "searches", true, tableId, "searches"),
+    headerCell("Clicks", "clicks", true, tableId, "clicks"),
+    headerCell("Competition", "competition", true, tableId, "competition"),
+    headerCell("CTR", "ctr", true, tableId, "ctr"),
     ...(compact ? [] : [
-      headerCell("Exact tag", "exactTag", true),
-      headerCell("Title match", "titleMatch", true),
-      headerCell("Est. revenue", "revenue", true)
+      headerCell("Exact tag", "exactTag", true, tableId, "exactTag"),
+      headerCell("Title match", "titleMatch", true, tableId, "titleMatch"),
+      headerCell("Est. revenue", "revenue", true, tableId, "revenue")
     ])
   ].join("");
   return `<thead><tr>${headers}</tr></thead><tbody>${body || '<tr><td colspan="9">Chưa có dữ liệu.</td></tr>'}</tbody>`;
 }
 
 function renderKeywordTable() {
-  $("#keywordTable").innerHTML = tableMarkup(metrics().sort((a, b) => b.score - a.score));
+  $("#keywordTable").innerHTML = tableMarkup(
+    metrics().sort((a, b) => b.score - a.score),
+    false,
+    "keywordTable"
+  );
 }
 
 function setSelectOptions(element, includeAll = false) {
@@ -222,17 +270,18 @@ function renderTags() {
     const opportunity = Math.max(1, Math.min(100, Math.round(55 + Math.log10(searches + clicks + 10) * 18 - Math.log10(competition + 10) * 11)));
     return { ...tag, searches, clicks, competition, opportunity };
   }).sort((a, b) => b.opportunity - a.opportunity || b.searches - a.searches).slice(0, 150);
+  const sortedRows = sortRows(rows, tableSortStates.tagTable, tagSortAccessors);
   const headers = [
-    headerCell("Tag", "tag"),
-    headerCell("Nguồn", "source"),
-    headerCell("Opportunity", "tagOpportunity", true),
-    headerCell("Occurrences", "occurrences", true),
-    headerCell("Searches", "searches", true),
-    headerCell("Clicks", "clicks", true),
-    headerCell("Competition", "competition", true),
-    headerCell("CTR", "ctr", true)
+    headerCell("Tag", "tag", false, "tagTable", "keyword"),
+    headerCell("Nguồn", "source", false, "tagTable", "source"),
+    headerCell("Opportunity", "tagOpportunity", true, "tagTable", "opportunity"),
+    headerCell("Occurrences", "occurrences", true, "tagTable", "occurrences"),
+    headerCell("Searches", "searches", true, "tagTable", "searches"),
+    headerCell("Clicks", "clicks", true, "tagTable", "clicks"),
+    headerCell("Competition", "competition", true, "tagTable", "competition"),
+    headerCell("CTR", "ctr", true, "tagTable", "ctr")
   ].join("");
-  $("#tagTable").innerHTML = `<thead><tr>${headers}</tr></thead><tbody>${rows.map((tag) => `<tr>
+  $("#tagTable").innerHTML = `<thead><tr>${headers}</tr></thead><tbody>${sortedRows.map((tag) => `<tr>
     <td><b>${escapeHtml(tag.keyword)}</b></td><td>${escapeHtml(tag._source)}</td><td class="num"><span class="score ${scoreClass(tag.opportunity)}">${tag.opportunity}</span></td>
     <td class="num">${fmt(number(tag.occurences))}</td><td class="num">${fmt(tag.searches)}</td><td class="num">${fmt(tag.clicks)}</td><td class="num">${fmt(tag.competition)}</td><td class="num">${fmt(number(tag.ctr?.value), 1)}%</td>
   </tr>`).join("") || '<tr><td colspan="8">Chưa có dữ liệu tag.</td></tr>'}</tbody>`;
@@ -279,6 +328,25 @@ function hideFieldTooltip() {
   delete fieldTooltip.dataset.owner;
 }
 
+function renderSortedTable(tableId) {
+  if (tableId === "overviewTable") renderOverview();
+  else if (tableId === "keywordTable") renderKeywordTable();
+  else if (tableId === "tagTable") renderTags();
+}
+
+function cycleHeaderSort(header) {
+  const tableId = header?.dataset.sortTable;
+  const sortKey = header?.dataset.sortKey;
+  if (!tableId || !sortKey || !tableSortStates[tableId]) return;
+  tableSortStates[tableId] = cycleSortRules(
+    tableSortStates[tableId],
+    sortKey,
+    header.dataset.sortType || "string"
+  );
+  hideFieldTooltip();
+  renderSortedTable(tableId);
+}
+
 document.addEventListener("pointerover", (event) => {
   const header = event.target.closest?.("th[data-tooltip]");
   if (header) showFieldTooltip(header);
@@ -293,6 +361,17 @@ document.addEventListener("focusin", (event) => {
 });
 document.addEventListener("focusout", (event) => {
   if (event.target.closest?.("th[data-tooltip]")) hideFieldTooltip();
+});
+document.addEventListener("click", (event) => {
+  const header = event.target.closest?.("th[data-sort-key]");
+  if (header) cycleHeaderSort(header);
+});
+document.addEventListener("keydown", (event) => {
+  const header = event.target.closest?.("th[data-sort-key]");
+  if (header && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    cycleHeaderSort(header);
+  }
 });
 window.addEventListener("scroll", hideFieldTooltip, true);
 window.addEventListener("resize", hideFieldTooltip);
