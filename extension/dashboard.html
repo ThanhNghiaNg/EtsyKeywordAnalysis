@@ -46,6 +46,22 @@
           <article><small>DANH SÁCH ĐẦU VÀO</small><h2>Keywords</h2><p class="muted">Mỗi dòng một keyword. Có thể dán trực tiếp hoặc nhập file keyworklist.txt.</p><textarea id="keywordInput" rows="12"></textarea><div class="file-row"><label>Nhập keyworklist.txt<input id="keywordFile" type="file" accept=".txt"></label><button id="saveKeywords">Lưu keywords</button></div></article>
           <article><small>XÁC THỰC ERANK</small><h2>Curl mẫu</h2><p class="muted">Curl chỉ được phân tích và lưu cục bộ trong Chrome. Chữ ký cũ không bị tái sử dụng.</p><textarea id="curlInput" rows="12" placeholder="curl 'https://members.erank.com/ext' ..."></textarea><div class="file-row"><label>Nhập curl.txt<input id="curlFile" type="file" accept=".txt"></label><button id="saveCurl">Lưu cấu hình</button></div><div id="configState" class="config-state"></div></article>
         </div>
+        <article class="score-editor-section">
+          <div class="article-head row"><div><small>CUSTOM SCORING ENGINE</small><h2>Công thức Score bằng JavaScript</h2><p class="muted">Viết JavaScript chuẩn, ví dụ Math.log10() và Math.min(). Kết quả phải là số hữu hạn và sẽ được giới hạn trong khoảng 1–100.</p></div><button id="saveScoreFormulas">Kiểm tra &amp; lưu công thức</button></div>
+          <div class="formula-grid">
+            <section class="formula-editor">
+              <div class="formula-title"><h3>Keyword Score</h3><button id="resetKeywordFormula" class="ghost" type="button">Mặc định</button></div>
+              <textarea id="keywordScoreFormula" rows="20" spellcheck="false"></textarea>
+              <details class="param-reference"><summary>Params có thể sử dụng</summary><div id="keywordParamReference" class="param-list"></div></details>
+            </section>
+            <section class="formula-editor">
+              <div class="formula-title"><h3>Tag Opportunity</h3><button id="resetTagFormula" class="ghost" type="button">Mặc định</button></div>
+              <textarea id="tagScoreFormula" rows="20" spellcheck="false"></textarea>
+              <details class="param-reference"><summary>Params có thể sử dụng</summary><div id="tagParamReference" class="param-list"></div></details>
+            </section>
+          </div>
+          <div id="formulaStatus" class="config-state">Công thức chạy trong sandbox riêng, không có quyền truy cập Chrome hoặc trang web.</div>
+        </article>
         <article class="cache-settings"><div><small>HIỆU LỰC CACHE</small><h2>Không tải lại keyword vừa phân tích</h2><p class="muted">Nhập số phút muốn tái sử dụng kết quả. Đặt 0 để luôn quét và fetch lại.</p></div><div class="cache-control"><input id="cacheMinutes" type="number" min="0" max="43200" step="1" value="10"><span>phút</span><button id="saveCache">Lưu cache</button></div></article>
         <article class="danger-zone"><div><h3>Xóa dữ liệu phân tích</h3><p class="muted">Xóa toàn bộ kết quả đã lưu, không xóa keyword/cấu hình.</p></div><button id="clearResults" class="danger">Xóa kết quả</button></article>
       </section>

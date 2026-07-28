@@ -8,7 +8,8 @@ const required = [
   "manifest.json", "background.js", "scraper.js", "popup.html", "popup.js",
   "popup.css", "dashboard.html", "dashboard.js", "dashboard.css",
   "dashboard-settings.css", "dashboard-listing-modal.css", "default-keywords.js",
-  "data-store.js", "table-sort.js", "listing-utils.js"
+  "data-store.js", "table-sort.js", "listing-utils.js",
+  "formula-sandbox.html", "formula-sandbox.js"
 ];
 
 for (const file of required) {
@@ -44,7 +45,8 @@ if (!/"endpoint"\s*:\s*"ext\/listing-ids"/.test(curlText)) throw new Error("curl
 
 for (const file of [
   "background.js", "scraper.js", "popup.js", "dashboard.js",
-  "data-store.js", "table-sort.js", "listing-utils.js"
+  "data-store.js", "table-sort.js", "listing-utils.js",
+  "formula-sandbox.js"
 ]) {
   const source = fs.readFileSync(path.join(extension, file), "utf8")
     .replace(/import[\s\S]*?from\s+["'][^"']+["'];\s*/g, "")
@@ -104,10 +106,74 @@ if (
 ) {
   throw new Error("Top Listings và Tags chưa dùng multi-select combobox.");
 }
+if (
+  !manifest.sandbox?.pages?.includes("formula-sandbox.html")
+  || !manifest.content_security_policy?.sandbox?.includes("'unsafe-eval'")
+  || !manifest.content_security_policy?.sandbox?.includes("worker-src blob:")
+) {
+  throw new Error("Formula editor chưa chạy trong Manifest sandbox riêng.");
+}
+if (
+  !/DEFAULT_KEYWORD_SCORE_FORMULA/.test(dashboardSource)
+  || !/DEFAULT_TAG_SCORE_FORMULA/.test(dashboardSource)
+  || !/discoverParamPaths/.test(dashboardSource)
+  || !/id="keywordParamReference"/.test(dashboardHtml)
+  || !/id="tagParamReference"/.test(dashboardHtml)
+) {
+  throw new Error("Formula editor thiếu hàm mặc định hoặc param discovery động.");
+}
+const formulaSandboxSource = fs.readFileSync(path.join(extension, "formula-sandbox.js"), "utf8");
+if (
+  !/new Blob\(\[workerSource\]/.test(formulaSandboxSource)
+  || !/new Worker\(workerUrl\)/.test(formulaSandboxSource)
+  || !/worker\?\.terminate\(\)/.test(formulaSandboxSource)
+  || !/FORMULA_SANDBOX_READY/.test(formulaSandboxSource)
+  || !/FORMULA_SANDBOX_READY/.test(dashboardSource)
+) {
+  throw new Error("Formula sandbox thiếu Worker có timeout/terminate.");
+}
 
 const { compactAnalysisRecord } = await import(path.join(extension, "data-store.js"));
 const { cycleSortRules, sortRows } = await import(path.join(extension, "table-sort.js"));
 const { collectListingItems } = await import(path.join(extension, "listing-utils.js"));
+
+function extractFormula(constantName) {
+  const marker = `const ${constantName} = \``;
+  const start = dashboardSource.indexOf(marker);
+  const end = start < 0 ? -1 : dashboardSource.indexOf("`;", start + marker.length);
+  if (start < 0 || end < 0) throw new Error(`Không đọc được ${constantName}.`);
+  return dashboardSource.slice(start + marker.length, end);
+}
+
+function executeFormula(formula, params) {
+  return new Function(`"use strict"; return (${formula});`)()(params);
+}
+
+const keywordFormula = extractFormula("DEFAULT_KEYWORD_SCORE_FORMULA");
+const tagFormula = extractFormula("DEFAULT_TAG_SCORE_FORMULA");
+if (
+  !keywordFormula.includes("Math.log10(")
+  || !keywordFormula.includes("Math.min(")
+  || !tagFormula.includes("Math.log10(")
+) {
+  throw new Error("Hàm mẫu phải sử dụng JavaScript chuẩn qua Math.");
+}
+const keywordFormulaResult = executeFormula(keywordFormula, {
+  searches: 100, clicks: 80, competition: 10000, ctr: 50
+});
+const expectedKeywordFormula = 50
+  + (Math.log10(190) - Math.log10(10010) * .58) * 19
+  + Math.min(10, 50 / 15);
+if (Math.abs(keywordFormulaResult - expectedKeywordFormula) > 1e-9) {
+  throw new Error("Hàm mẫu Keyword Score không khớp công thức mặc định.");
+}
+const tagFormulaResult = executeFormula(tagFormula, {
+  searches: 100, clicks: 80, competition: 10000
+});
+const expectedTagFormula = 55 + Math.log10(190) * 18 - Math.log10(10010) * 11;
+if (Math.abs(tagFormulaResult - expectedTagFormula) > 1e-9) {
+  throw new Error("Hàm mẫu Tag Opportunity không khớp công thức mặc định.");
+}
 const sampleRecord = {
   keyword: "sample keyword",
   listingIds: [1, 1, 2],

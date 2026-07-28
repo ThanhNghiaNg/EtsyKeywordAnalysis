@@ -14,6 +14,138 @@ const fmt = (value, digits = 0) => new Intl.NumberFormat("en-US", { maximumFract
 const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value || 0);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
+const DEFAULT_KEYWORD_SCORE_FORMULA = `function score(params) {
+  const {
+    searches,
+    clicks,
+    competition,
+    ctr,
+    listingCount,
+    views,
+    favorers,
+    sales,
+    revenue,
+    avgPrice,
+    avgConversionRate,
+    exactTag,
+    titleMatch,
+    convertedCount,
+    is_converted
+  } = params;
+
+  const demand = Math.log10(searches + clicks + 10);
+  const difficulty = Math.log10(competition + 10);
+
+  return 50
+    + (demand - difficulty * 0.58) * 19
+    + Math.min(10, ctr / 15);
+}`;
+
+const DEFAULT_TAG_SCORE_FORMULA = `function score(params) {
+  const {
+    searches,
+    clicks,
+    competition,
+    ctr,
+    occurrences,
+    sourceCount,
+    trendAverage
+  } = params;
+
+  return 55
+    + Math.log10(searches + clicks + 10) * 18
+    - Math.log10(competition + 10) * 11;
+}`;
+
+const LEGACY_DEFAULT_KEYWORD_SCORE_FORMULA = DEFAULT_KEYWORD_SCORE_FORMULA.replaceAll("Math.", "");
+const LEGACY_DEFAULT_TAG_SCORE_FORMULA = DEFAULT_TAG_SCORE_FORMULA.replaceAll("Math.", "");
+
+function loadStoredFormula(value, defaultFormula, legacyDefaultFormula) {
+  if (typeof value !== "string" || !value.trim()) return defaultFormula;
+  return value.trim() === legacyDefaultFormula.trim() ? defaultFormula : value;
+}
+
+function isLegacyStoredFormula(value, legacyDefaultFormula) {
+  return typeof value === "string" && value.trim() === legacyDefaultFormula.trim();
+}
+
+let scoreFormulas = {
+  keyword: DEFAULT_KEYWORD_SCORE_FORMULA,
+  tag: DEFAULT_TAG_SCORE_FORMULA
+};
+let keywordScoreOverrides = new Map();
+let formulaSandboxFrame;
+let formulaSandboxReady;
+let formulaSandboxReadyResolve;
+let formulaSandboxReadyTimer;
+const formulaRequests = new Map();
+
+function ensureFormulaSandbox() {
+  if (formulaSandboxReady) return formulaSandboxReady;
+  formulaSandboxReady = new Promise((resolve, reject) => {
+    formulaSandboxReadyResolve = resolve;
+    const failStartup = (message) => {
+      clearTimeout(formulaSandboxReadyTimer);
+      formulaSandboxFrame?.remove();
+      formulaSandboxFrame = undefined;
+      formulaSandboxReady = undefined;
+      formulaSandboxReadyResolve = undefined;
+      reject(new Error(message));
+    };
+    formulaSandboxReadyTimer = setTimeout(() => {
+      failStartup("Formula Sandbox không khởi tạo được.");
+    }, 3500);
+    formulaSandboxFrame = document.createElement("iframe");
+    formulaSandboxFrame.hidden = true;
+    formulaSandboxFrame.src = chrome.runtime.getURL("formula-sandbox.html");
+    formulaSandboxFrame.addEventListener("error", () => {
+      failStartup("Không tải được Formula Sandbox.");
+    }, { once: true });
+    document.body.appendChild(formulaSandboxFrame);
+  });
+  return formulaSandboxReady;
+}
+
+window.addEventListener("message", (event) => {
+  if (event.source !== formulaSandboxFrame?.contentWindow) return;
+  if (event.data?.type === "FORMULA_SANDBOX_READY") {
+    clearTimeout(formulaSandboxReadyTimer);
+    formulaSandboxReadyResolve?.();
+    formulaSandboxReadyResolve = undefined;
+    return;
+  }
+  if (event.data?.type !== "SCORE_FORMULA_RESULT") return;
+  const pending = formulaRequests.get(event.data.requestId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  formulaRequests.delete(event.data.requestId);
+  if (event.data.ok) pending.resolve(event.data.results);
+  else pending.reject(new Error(event.data.error || "Công thức score gặp lỗi."));
+});
+
+async function evaluateScoreFormula(formula, paramsList) {
+  if (!paramsList.length) return [];
+  await ensureFormulaSandbox();
+  const requestId = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      formulaRequests.delete(requestId);
+      reject(new Error("Formula Sandbox không phản hồi."));
+    }, 3500);
+    formulaRequests.set(requestId, { resolve, reject, timer });
+    formulaSandboxFrame.contentWindow.postMessage({
+      type: "EVALUATE_SCORE_FORMULA",
+      requestId,
+      formula,
+      paramsList
+    }, "*");
+  });
+}
+
+function clampScore(value) {
+  return Math.max(1, Math.min(100, Math.round(number(value))));
+}
+
 const HEADER_TOOLTIPS = {
   keyword: `Từ khóa gốc được dùng để mở trang tìm kiếm Etsy và lấy dữ liệu thị trường.
 
@@ -101,6 +233,8 @@ Sắp xếp: Bấm để chuyển Idle → Tăng dần → Giảm dần → Idle
 
 let allResults = {};
 let listingDetailsByKey = new Map();
+let tagRenderVersion = 0;
+let latestTagScoreParams = [];
 const filterSelections = {
   listingFilter: new Set(),
   tagFilter: new Set()
@@ -109,6 +243,7 @@ const filterSelections = {
 async function reloadResults() {
   const records = await getAllAnalysisResults();
   allResults = Object.fromEntries(records.map((record) => [record.keyword, record]));
+  await refreshKeywordFormulaScores();
   renderAll();
 }
 
@@ -133,31 +268,175 @@ function parseCurl(text) {
   return { url, accessToken: bearer, sourceDeviceId: deviceId, importedAt: Date.now(), registered: false };
 }
 
+function trendStats(trend) {
+  const values = Object.entries(trend || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, value]) => number(value));
+  if (!values.length) return { average: 0, latest: 0, min: 0, max: 0 };
+  return {
+    average: values.reduce((sum, value) => sum + value, 0) / values.length,
+    latest: values.at(-1),
+    min: Math.min(...values),
+    max: Math.max(...values)
+  };
+}
+
+function average(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
 function keywordMetrics(record) {
   const data = record.data || {};
   const listings = data.listings || [];
   const keyword = record.keyword.toLowerCase();
-  const popular = (data.popular_tags || []).find((tag) => tag.keyword?.toLowerCase() === keyword)
-    || (data.popular_tags || []).find((tag) => keyword.includes(tag.keyword?.toLowerCase()));
+  const tagKeyword = (tag) => typeof tag?.keyword === "string" ? tag.keyword.toLowerCase() : "";
+  const popular = (data.popular_tags || []).find((tag) => tagKeyword(tag) === keyword)
+    || (data.popular_tags || []).find((tag) => keyword.includes(tagKeyword(tag)));
   const searches = number(popular?.avg_searches?.value);
   const clicks = number(popular?.avg_clicks?.value);
   const competition = number(popular?.competition?.value);
   const ctr = number(popular?.ctr?.value);
-  const exactTag = listings.filter((item) => (item.tags || []).some((tag) => tag.toLowerCase() === keyword)).length;
+  const exactTag = listings.filter((item) => (item.tags || []).some((tag) => String(tag).toLowerCase() === keyword)).length;
   const titleMatch = listings.filter((item) => item.title?.toLowerCase().includes(keyword)).length;
   const views = listings.reduce((sum, item) => sum + number(item.views), 0);
+  const favorers = listings.reduce((sum, item) => sum + number(item.favorers), 0);
   const sales = listings.reduce((sum, item) => sum + number(item.est_sales?.value), 0);
   const revenue = listings.reduce((sum, item) => sum + number(item.est_revenue?.value), 0);
-  const avgPrice = listings.length ? listings.reduce((sum, item) => sum + number(item.listing_price?.value), 0) / listings.length : 0;
+  const prices = listings.map((item) => number(item.listing_price?.value));
+  const conversionRates = listings.map((item) => number(item.est_conversion_rate?.value));
+  const convertedCount = listings.filter((item) => item.is_converted).length;
+  const listingCount = listings.length;
+  const avgPrice = average(prices);
+  const trend = trendStats(popular?.search_trend);
   const demand = Math.log10(searches + clicks + 10);
   const difficulty = Math.log10(competition + 10);
   const rawScore = 50 + (demand - difficulty * .58) * 19 + Math.min(10, ctr / 15);
-  const score = Math.max(1, Math.min(100, Math.round(rawScore)));
-  return { keyword: record.keyword, listings: listings.length, searches, clicks, competition, ctr, exactTag, titleMatch, views, sales, revenue, avgPrice, score, popular };
+  const scoreParams = {
+    keyword: record.keyword,
+    searches,
+    clicks,
+    competition,
+    ctr,
+    listingCount,
+    views,
+    favorers,
+    sales,
+    revenue,
+    avgViews: listingCount ? views / listingCount : 0,
+    avgFavorers: listingCount ? favorers / listingCount : 0,
+    avgSales: listingCount ? sales / listingCount : 0,
+    avgRevenue: listingCount ? revenue / listingCount : 0,
+    avgPrice,
+    minPrice: prices.length ? Math.min(...prices) : 0,
+    maxPrice: prices.length ? Math.max(...prices) : 0,
+    avgConversionRate: average(conversionRates),
+    exactTag,
+    exactTagRate: listingCount ? exactTag / listingCount * 100 : 0,
+    titleMatch,
+    titleMatchRate: listingCount ? titleMatch / listingCount * 100 : 0,
+    convertedCount,
+    convertedRate: listingCount ? convertedCount / listingCount * 100 : 0,
+    is_converted: convertedCount,
+    trendAverage: trend.average,
+    trendLatest: trend.latest,
+    trendMin: trend.min,
+    trendMax: trend.max,
+    listings,
+    popularTag: popular || null,
+    response: data,
+    record
+  };
+  const score = keywordScoreOverrides.has(record.keyword)
+    ? keywordScoreOverrides.get(record.keyword)
+    : clampScore(rawScore);
+  return {
+    keyword: record.keyword,
+    listings: listingCount,
+    searches,
+    clicks,
+    competition,
+    ctr,
+    exactTag,
+    titleMatch,
+    views,
+    favorers,
+    sales,
+    revenue,
+    avgPrice,
+    score,
+    popular,
+    scoreParams
+  };
 }
 
 function metrics() {
   return Object.values(allResults).map(keywordMetrics);
+}
+
+function setFormulaStatus(message, isError = false) {
+  const element = $("#formulaStatus");
+  if (!element) return;
+  element.textContent = message;
+  element.classList.toggle("error-text", isError);
+}
+
+function sampleParamValue(value) {
+  if (value == null) return String(value);
+  if (typeof value === "string") return value.length > 42 ? `${value.slice(0, 42)}…` : value;
+  if (typeof value === "number") return fmt(value, 2);
+  if (typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `${value.length} items`;
+  return "object";
+}
+
+function discoverParamPaths(value, path = "params", depth = 0, entries = []) {
+  if (entries.length >= 350) return entries;
+  const type = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+  entries.push({ path, type, sample: sampleParamValue(value) });
+  if (depth >= 5 || value == null) return entries;
+  if (Array.isArray(value)) {
+    if (value.length) discoverParamPaths(value[0], `${path}[]`, depth + 1, entries);
+  } else if (typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      discoverParamPaths(child, `${path}.${key}`, depth + 1, entries);
+      if (entries.length >= 350) break;
+    }
+  }
+  return entries;
+}
+
+function renderParamReference(containerId, paramsList) {
+  const container = $(`#${containerId}`);
+  if (!container) return;
+  if (!paramsList?.length) {
+    container.innerHTML = '<div class="param-empty">Chưa có response. Chạy phân tích để khám phá params thực tế.</div>';
+    return;
+  }
+  const uniqueEntries = new Map();
+  for (const params of paramsList) {
+    for (const entry of discoverParamPaths(params)) {
+      if (!uniqueEntries.has(entry.path)) uniqueEntries.set(entry.path, entry);
+    }
+  }
+  container.innerHTML = [...uniqueEntries.values()].map((entry) => `<div class="param-item">
+    <code>${escapeHtml(entry.path)}</code><span>${escapeHtml(entry.type)}</span><span>${escapeHtml(entry.sample)}</span>
+  </div>`).join("");
+}
+
+async function refreshKeywordFormulaScores() {
+  const rows = Object.values(allResults).map(keywordMetrics);
+  renderParamReference("keywordParamReference", rows.map((row) => row.scoreParams));
+  if (!rows.length) {
+    keywordScoreOverrides = new Map();
+    return;
+  }
+  try {
+    const scores = await evaluateScoreFormula(scoreFormulas.keyword, rows.map((row) => row.scoreParams));
+    keywordScoreOverrides = new Map(rows.map((row, index) => [row.keyword, clampScore(scores[index])]));
+  } catch (error) {
+    keywordScoreOverrides = new Map();
+    setFormulaStatus(`Keyword Score lỗi, đang dùng công thức mặc định: ${error.message}`, true);
+  }
 }
 
 function scoreClass(score) {
@@ -348,7 +627,8 @@ function openListingDetail(detailKey) {
   $("#listingDetailModal").showModal();
 }
 
-function renderTags() {
+async function renderTags() {
+  const renderVersion = ++tagRenderVersion;
   const records = selectedRecords("tagFilter");
   const tags = records.flatMap((record) => (record.data?.popular_tags || []).map((tag) => ({ ...tag, _source: record.keyword })));
   const deduped = new Map();
@@ -369,10 +649,49 @@ function renderTags() {
   }
   const rows = [...deduped.values()].map((tag) => {
     const searches = number(tag.avg_searches?.value), clicks = number(tag.avg_clicks?.value), competition = number(tag.competition?.value);
-    const opportunity = Math.max(1, Math.min(100, Math.round(55 + Math.log10(searches + clicks + 10) * 18 - Math.log10(competition + 10) * 11)));
-    return { ...tag, _source: tag._sources.join(", "), searches, clicks, competition, opportunity };
-  }).sort((a, b) => b.opportunity - a.opportunity || b.searches - a.searches).slice(0, 150);
-  const sortedRows = sortRows(rows, tableSortStates.tagTable, tagSortAccessors);
+    const trend = trendStats(tag.search_trend);
+    const scoreParams = {
+      keyword: tag.keyword,
+      occurrences: number(tag.occurences),
+      searches,
+      clicks,
+      competition,
+      ctr: number(tag.ctr?.value),
+      sourceCount: tag._sources.length,
+      trendAverage: trend.average,
+      trendLatest: trend.latest,
+      trendMin: trend.min,
+      trendMax: trend.max,
+      searchTrend: tag.search_trend || {},
+      tag
+    };
+    const defaultOpportunity = clampScore(
+      55 + Math.log10(searches + clicks + 10) * 18 - Math.log10(competition + 10) * 11
+    );
+    return {
+      ...tag,
+      _source: tag._sources.join(", "),
+      searches,
+      clicks,
+      competition,
+      opportunity: defaultOpportunity,
+      scoreParams
+    };
+  });
+  latestTagScoreParams = rows.map((row) => row.scoreParams);
+  renderParamReference("tagParamReference", rows.map((row) => row.scoreParams));
+  try {
+    const scores = await evaluateScoreFormula(scoreFormulas.tag, rows.map((row) => row.scoreParams));
+    if (renderVersion !== tagRenderVersion) return;
+    rows.forEach((row, index) => { row.opportunity = clampScore(scores[index]); });
+  } catch (error) {
+    if (renderVersion !== tagRenderVersion) return;
+    setFormulaStatus(`Tag Opportunity lỗi, đang dùng công thức mặc định: ${error.message}`, true);
+  }
+  const visibleRows = rows
+    .sort((a, b) => b.opportunity - a.opportunity || b.searches - a.searches)
+    .slice(0, 150);
+  const sortedRows = sortRows(visibleRows, tableSortStates.tagTable, tagSortAccessors);
   const headers = [
     headerCell("Tag", "tag", false, "tagTable", "keyword"),
     headerCell("Nguồn", "source", false, "tagTable", "source"),
@@ -552,20 +871,91 @@ function paintJob(state = {}) {
 }
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(["keywords", "results", "apiConfig", "jobState", "cacheMinutes"]);
+  const stored = await chrome.storage.local.get([
+    "keywords", "results", "apiConfig", "jobState", "cacheMinutes", "scoreFormulas"
+  ]);
   if (stored.results) {
     await migrateLegacyResults(stored.results);
     await chrome.storage.local.remove("results");
   }
   const records = await getAllAnalysisResults();
   allResults = Object.fromEntries(records.map((record) => [record.keyword, record]));
+  scoreFormulas = {
+    keyword: loadStoredFormula(
+      stored.scoreFormulas?.keyword,
+      DEFAULT_KEYWORD_SCORE_FORMULA,
+      LEGACY_DEFAULT_KEYWORD_SCORE_FORMULA
+    ),
+    tag: loadStoredFormula(
+      stored.scoreFormulas?.tag,
+      DEFAULT_TAG_SCORE_FORMULA,
+      LEGACY_DEFAULT_TAG_SCORE_FORMULA
+    )
+  };
+  if (
+    isLegacyStoredFormula(stored.scoreFormulas?.keyword, LEGACY_DEFAULT_KEYWORD_SCORE_FORMULA)
+    || isLegacyStoredFormula(stored.scoreFormulas?.tag, LEGACY_DEFAULT_TAG_SCORE_FORMULA)
+  ) {
+    await chrome.storage.local.set({ scoreFormulas });
+  }
+  $("#keywordScoreFormula").value = scoreFormulas.keyword;
+  $("#tagScoreFormula").value = scoreFormulas.tag;
   $("#keywordInput").value = (stored.keywords?.length ? stored.keywords : DEFAULT_KEYWORDS).join("\n");
   $("#cacheMinutes").value = Number.isFinite(Number(stored.cacheMinutes)) ? Number(stored.cacheMinutes) : 10;
   $("#configState").textContent = stored.apiConfig?.accessToken
     ? `Đã nhập curl lúc ${new Date(stored.apiConfig.importedAt || Date.now()).toLocaleString("vi-VN")}.`
     : "Chưa nhập curl. Extension sẽ thử dùng phiên đăng nhập eRank trong trình duyệt.";
   paintJob(stored.jobState);
+  await refreshKeywordFormulaScores();
   renderAll();
+}
+
+function fallbackKeywordParams() {
+  return {
+    keyword: "sample", searches: 0, clicks: 0, competition: 0, ctr: 0,
+    listingCount: 0, views: 0, favorers: 0, sales: 0, revenue: 0,
+    avgViews: 0, avgFavorers: 0, avgSales: 0, avgRevenue: 0,
+    avgPrice: 0, minPrice: 0, maxPrice: 0, avgConversionRate: 0,
+    exactTag: 0, exactTagRate: 0, titleMatch: 0, titleMatchRate: 0,
+    convertedCount: 0, convertedRate: 0, is_converted: 0,
+    trendAverage: 0, trendLatest: 0, trendMin: 0, trendMax: 0,
+    listings: [], popularTag: null, response: {}, record: {}
+  };
+}
+
+function fallbackTagParams() {
+  return {
+    keyword: "sample", occurrences: 0, searches: 0, clicks: 0,
+    competition: 0, ctr: 0, sourceCount: 1,
+    trendAverage: 0, trendLatest: 0, trendMin: 0, trendMax: 0,
+    searchTrend: {}, tag: {}
+  };
+}
+
+async function saveScoreFormulaEditors() {
+  const button = $("#saveScoreFormulas");
+  const keywordFormula = $("#keywordScoreFormula").value.trim();
+  const tagFormula = $("#tagScoreFormula").value.trim();
+  if (!keywordFormula || !tagFormula) {
+    setFormulaStatus("Cả hai editor phải có function score(params).", true);
+    return;
+  }
+  button.disabled = true;
+  setFormulaStatus("Đang kiểm tra công thức trong sandbox…");
+  try {
+    const keywordParams = metrics().map((row) => row.scoreParams);
+    await evaluateScoreFormula(keywordFormula, keywordParams.length ? keywordParams : [fallbackKeywordParams()]);
+    await evaluateScoreFormula(tagFormula, latestTagScoreParams.length ? latestTagScoreParams : [fallbackTagParams()]);
+    scoreFormulas = { keyword: keywordFormula, tag: tagFormula };
+    await chrome.storage.local.set({ scoreFormulas });
+    await refreshKeywordFormulaScores();
+    renderAll();
+    setFormulaStatus("Công thức hợp lệ, đã lưu và áp dụng cho toàn bộ dashboard.");
+  } catch (error) {
+    setFormulaStatus(`Không thể lưu: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 $$("nav button").forEach((button) => button.addEventListener("click", () => {
@@ -594,6 +984,23 @@ $("#saveCurl").addEventListener("click", async () => {
   } catch (error) {
     $("#notice").hidden = false; $("#notice").className = "notice error"; $("#notice").textContent = error.message;
   }
+});
+$("#saveScoreFormulas").addEventListener("click", saveScoreFormulaEditors);
+$("#resetKeywordFormula").addEventListener("click", () => {
+  $("#keywordScoreFormula").value = DEFAULT_KEYWORD_SCORE_FORMULA;
+  setFormulaStatus("Đã khôi phục hàm mẫu Keyword Score trong editor. Bấm Kiểm tra & lưu để áp dụng.");
+});
+$("#resetTagFormula").addEventListener("click", () => {
+  $("#tagScoreFormula").value = DEFAULT_TAG_SCORE_FORMULA;
+  setFormulaStatus("Đã khôi phục hàm mẫu Tag Opportunity trong editor. Bấm Kiểm tra & lưu để áp dụng.");
+});
+[$("#keywordScoreFormula"), $("#tagScoreFormula")].forEach((editor) => {
+  editor.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    const start = editor.selectionStart;
+    editor.setRangeText("  ", start, editor.selectionEnd, "end");
+  });
 });
 $("#runBtn").addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({ type: "START_ANALYSIS" });
@@ -624,7 +1031,9 @@ $("#saveCache").addEventListener("click", async () => {
 $("#clearResults").addEventListener("click", async () => {
   if (!confirm("Xóa toàn bộ kết quả phân tích đã lưu?")) return;
   await clearAnalysisResults();
-  allResults = {}; renderAll();
+  allResults = {};
+  await refreshKeywordFormulaScores();
+  renderAll();
 });
 setupCombobox($("#listingFilter"), renderListings);
 setupCombobox($("#tagFilter"), renderTags);
@@ -662,4 +1071,8 @@ chrome.storage.onChanged.addListener((changes) => {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "RESULT_UPDATED") reloadResults();
 });
+$("#keywordScoreFormula").value = DEFAULT_KEYWORD_SCORE_FORMULA;
+$("#tagScoreFormula").value = DEFAULT_TAG_SCORE_FORMULA;
+renderParamReference("keywordParamReference", []);
+renderParamReference("tagParamReference", []);
 loadState();

@@ -45,6 +45,13 @@ trùng giữ lại danh sách các keyword nguồn.
 Opportunity score là chỉ số so sánh tương đối trong bộ keyword, không phải cam
 kết doanh số.
 
+Trong **Cấu hình → Công thức Score bằng JavaScript**, có thể sửa riêng Keyword
+Score và Tag Opportunity. Hai editor luôn có sẵn hàm mặc định; nút **Mặc định**
+khôi phục hàm mẫu. Danh sách params được khám phá động từ response đã lưu, gồm
+cả path lồng nhau, kiểu và giá trị mẫu. Công thức dùng JavaScript chuẩn
+(`Math.log10()`, `Math.min()`...), chạy trong sandbox Worker, bị dừng nếu quá
+2 giây, và kết quả cuối được giới hạn trong khoảng 1–100.
+
 ## Kiểm tra mã nguồn
 
 Chạy `npm run validate` để kiểm tra Manifest, quyền truy cập, đồng bộ danh sách
