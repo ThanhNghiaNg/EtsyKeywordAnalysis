@@ -10,7 +10,7 @@ gọi API eRank bằng request được ký động, và hiển thị dashboard 
 3. Chọn **Load unpacked** và trỏ tới thư mục `extension`.
 4. Đảm bảo bạn đang đăng nhập `https://members.erank.com`.
 5. Mở dashboard của extension → **Cấu hình**.
-6. Nhập `keyworklist.txt` và `curl.txt`, rồi bấm lưu.
+6. Nhập danh sách Keywords rồi bấm `Lưu Keywords`.
 7. Bấm **Chạy phân tích**.
 
 Extension mở từng tab tìm kiếm Etsy ở chế độ nền, cuộn trang để tải listing,
