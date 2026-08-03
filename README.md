@@ -26,8 +26,7 @@ dashboard sẽ đóng tab Etsy và hủy fetch đang chạy.
 
 ## Khi curl/phiên hết hạn
 
-Dashboard sẽ hiển thị thông báo bắt đầu bằng `CURL_EXPIRED`. Copy curl mới từ
-request `https://members.erank.com/ext`, nhập lại trong **Cấu hình**, rồi chạy
+Dashboard sẽ hiển thị thông báo bắt đầu bằng `CURL_EXPIRED`. Đăng nhập trong `https://members.erank.com`, rồi chạy
 tiếp. Các kết quả keyword đã thu thập vẫn được giữ và tác vụ tiếp tục từ keyword
 đang bị gián đoạn.
 
