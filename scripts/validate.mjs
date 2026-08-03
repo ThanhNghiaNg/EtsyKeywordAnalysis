@@ -67,8 +67,16 @@ if (!/DEFAULT_CACHE_MINUTES\s*=\s*10/.test(backgroundSource) || !/stored\.cacheM
 if (!/NETWORK_ATTEMPTS\s*=\s*3/.test(backgroundSource)) {
   throw new Error("Cơ chế retry mạng chưa được cấu hình 3 lần.");
 }
-if (!/queue\.push\(\{\s*keyword,\s*queueAttempt: queueAttempt \+ 1\s*\}\)/.test(backgroundSource)) {
+if (!/(?:state\.)?queue\.push\(\{\s*keyword,\s*queueAttempt: queueAttempt \+ 1\s*\}\)/.test(backgroundSource)) {
   throw new Error("Keyword lỗi chưa được đẩy xuống cuối queue.");
+}
+if (
+  !/DEFAULT_PARALLEL_ANALYSIS\s*=\s*false/.test(backgroundSource)
+  || !/PARALLEL_KEYWORD_LIMIT\s*=\s*3/.test(backgroundSource)
+  || !/stored\.parallelAnalysis/.test(backgroundSource)
+  || !/Promise\.allSettled\(batch\.map/.test(backgroundSource)
+) {
+  throw new Error("Queue chưa hỗ trợ toggle chạy song song mặc định tắt, tối đa 3 keyword.");
 }
 if (!/status:\s*failed\.length\s*\?\s*"done_with_errors"\s*:\s*"done"/.test(backgroundSource)) {
   throw new Error("Tiến trình chưa hỗ trợ hoàn tất trong khi một số keyword bị lỗi.");
@@ -79,6 +87,13 @@ if (!/new AbortController\(\)/.test(backgroundSource) || !/activeTabIds/.test(ba
 const dashboardHtml = fs.readFileSync(path.join(extension, "dashboard.html"), "utf8");
 if (!/id="cacheMinutes"/.test(dashboardHtml) || !/id="stopBtn"/.test(dashboardHtml)) {
   throw new Error("Dashboard thiếu cấu hình cache hoặc nút dừng.");
+}
+if (
+  !/id="parallelAnalysis"[^>]*type="checkbox"[^>]*role="switch"/.test(dashboardHtml)
+  || /id="parallelAnalysis"[^>]*checked/.test(dashboardHtml)
+  || !/stored\.parallelAnalysis === true/.test(fs.readFileSync(path.join(extension, "dashboard.js"), "utf8"))
+) {
+  throw new Error("Dashboard thiếu toggle phân tích song song mặc định tắt.");
 }
 const dashboardSource = fs.readFileSync(path.join(extension, "dashboard.js"), "utf8");
 for (const tooltipKey of [

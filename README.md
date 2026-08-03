@@ -24,6 +24,10 @@ lỗi, tác vụ ghi nhận lỗi và tiếp tục keyword khác. Thời gian ca
 trong **Cấu hình** (mặc định 10 phút, đặt 0 để tắt). Nút **Ngừng phân tích** ở
 dashboard sẽ đóng tab Etsy và hủy fetch đang chạy.
 
+Chế độ **Phân tích keyword song song** mặc định tắt. Khi bật, extension xử lý
+tối đa 3 keyword cùng lúc; khi tắt, queue chạy tuần tự từng keyword. Retry, lượt
+queue cuối, cache và cơ chế dừng vẫn giữ nguyên.
+
 ## Khi curl/phiên hết hạn
 
 Dashboard sẽ hiển thị thông báo bắt đầu bằng `CURL_EXPIRED`. Đăng nhập trong `https://members.erank.com`, rồi chạy

@@ -6,10 +6,16 @@ import {
 } from "./data-store.js";
 
 let cancelRequested = false;
+let analysisFatalError = null;
+let sessionPromise;
+let sessionRefreshPromise;
+let jobWriteChain = Promise.resolve();
 const activeTabIds = new Set();
 const activeFetchControllers = new Set();
 
 const DEFAULT_CACHE_MINUTES = 10;
+const DEFAULT_PARALLEL_ANALYSIS = false;
+const PARALLEL_KEYWORD_LIMIT = 3;
 const MAX_CACHE_MINUTES = 43200;
 const NETWORK_ATTEMPTS = 3;
 const QUEUE_ATTEMPTS = 2;
@@ -26,7 +32,19 @@ function cancelledError() {
 }
 
 function assertNotCancelled() {
+  if (analysisFatalError) throw analysisFatalError;
   if (cancelRequested) throw cancelledError();
+}
+
+function abortActiveWork() {
+  for (const controller of activeFetchControllers) controller.abort();
+  return Promise.allSettled([...activeTabIds].map((tabId) => chrome.tabs.remove(tabId)));
+}
+
+function stopForFatalError(error) {
+  if (!analysisFatalError) analysisFatalError = error;
+  abortActiveWork();
+  return analysisFatalError;
 }
 
 function normalizeCacheMinutes(value) {
@@ -42,6 +60,7 @@ async function cancellableFetch(url, options = {}) {
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
+    if (analysisFatalError) throw analysisFatalError;
     if (cancelRequested || error.name === "AbortError") throw cancelledError();
     throw error;
   } finally {
@@ -119,7 +138,7 @@ async function bootstrap(config) {
   return nextConfig;
 }
 
-async function ensureSession() {
+async function ensureSessionOnce() {
   const stored = await storageGet("apiConfig");
   let config = stored.apiConfig || {};
   // A curl import supplies a usable bearer token, but its device signature belongs
@@ -130,6 +149,34 @@ async function ensureSession() {
     await storageSet({ apiConfig: config });
   }
   return config;
+}
+
+function ensureSession() {
+  if (!sessionPromise) {
+    sessionPromise = ensureSessionOnce().finally(() => { sessionPromise = undefined; });
+  }
+  return sessionPromise;
+}
+
+function refreshSession(staleConfig) {
+  if (!sessionRefreshPromise) {
+    sessionRefreshPromise = (async () => {
+      const stored = await storageGet("apiConfig");
+      if (
+        stored.apiConfig?.registered
+        && stored.apiConfig.accessToken
+        && stored.apiConfig.accessToken !== staleConfig.accessToken
+      ) {
+        return stored.apiConfig;
+      }
+      await storageSet({ apiConfig: { ...staleConfig, registered: false } });
+      const refreshed = await bootstrap(staleConfig);
+      refreshed.registered = true;
+      await storageSet({ apiConfig: refreshed });
+      return refreshed;
+    })().finally(() => { sessionRefreshPromise = undefined; });
+  }
+  return sessionRefreshPromise;
 }
 
 async function callListingApi(keyword, listingIds) {
@@ -153,10 +200,7 @@ async function callListingApi(keyword, listingIds) {
   });
   let response = await request();
   if (response.status === 401 || response.status === 403) {
-    await storageSet({ apiConfig: { ...config, registered: false } });
-    const refreshed = await bootstrap(config);
-    refreshed.registered = true;
-    await storageSet({ apiConfig: refreshed });
+    const refreshed = await refreshSession(config);
     const refreshedHeaders = await signRequest("POST", path, refreshed.deviceId, rawBody);
     response = await cancellableFetch(`https://members.erank.com${path}`, {
       method: "POST",
@@ -226,7 +270,9 @@ async function waitForTab(tabId, timeout = 30000) {
     const removedListener = (removedId) => {
       if (removedId === tabId) {
         cleanup();
-        reject(cancelRequested ? cancelledError() : new Error("Tab Etsy đã bị đóng trước khi tải xong."));
+        reject(analysisFatalError || (cancelRequested
+          ? cancelledError()
+          : new Error("Tab Etsy đã bị đóng trước khi tải xong.")));
       }
     };
     chrome.tabs.onUpdated.addListener(updatedListener);
@@ -269,6 +315,7 @@ async function scrapeKeywordWithRetry(keyword, onRetry) {
       return await scrapeKeywordOnce(keyword);
     } catch (error) {
       lastError = error;
+      if (analysisFatalError) throw analysisFatalError;
       if (cancelRequested) throw cancelledError();
       if (error.code === "CANCELLED" || attempt === NETWORK_ATTEMPTS) throw error;
       await onRetry(attempt + 1, NETWORK_ATTEMPTS, error);
@@ -278,13 +325,100 @@ async function scrapeKeywordWithRetry(keyword, onRetry) {
   throw lastError;
 }
 
-async function setJob(patch) {
-  const { jobState = {} } = await storageGet("jobState");
-  await storageSet({ jobState: { ...jobState, ...patch, updatedAt: Date.now() } });
+function setJob(patch) {
+  const write = jobWriteChain.then(async () => {
+    const { jobState = {} } = await storageGet("jobState");
+    await storageSet({ jobState: { ...jobState, ...patch, updatedAt: Date.now() } });
+  });
+  jobWriteChain = write.catch(() => {});
+  return write;
+}
+
+function isCurlExpired(error) {
+  return error.code === "CURL_EXPIRED" || error.message?.startsWith("CURL_EXPIRED");
+}
+
+async function processKeywordTask(task, state) {
+  assertNotCancelled();
+  const { keyword, queueAttempt } = task;
+  const existing = await getAnalysisResult(keyword);
+  assertNotCancelled();
+  if (state.cacheTtlMs > 0 && existing && Date.now() - existing.collectedAt < state.cacheTtlMs) {
+    state.settled += 1;
+    state.cached += 1;
+    delete state.failures[keyword];
+    await setJob({
+      current: state.settled,
+      cached: state.cached,
+      failures: Object.values(state.failures),
+      message: `Dùng cache dưới ${state.cacheMinutes} phút: “${keyword}”`
+    });
+    return;
+  }
+  try {
+    await setJob({
+      current: state.settled,
+      message: `Đang quét Etsy: “${keyword}”${queueAttempt > 1 ? " · lượt queue cuối" : ""}`
+    });
+    const listingIds = await scrapeKeywordWithRetry(keyword, async (attempt, total, error) => {
+      await setJob({
+        message: `Tải Etsy lỗi, retry ${attempt}/${total}: “${keyword}” · ${error.message}`
+      });
+    });
+    await setJob({
+      current: state.settled,
+      message: `Đang lấy dữ liệu SEO cho “${keyword}” (${listingIds.length} listings)…`
+    });
+    const data = await callListingApiWithRetry(keyword, listingIds, async (attempt, total, error) => {
+      await setJob({
+        message: `Fetch eRank lỗi, retry ${attempt}/${total}: “${keyword}” · ${error.message}`
+      });
+    });
+    assertNotCancelled();
+    await putAnalysisResult({ keyword, listingIds, data, collectedAt: Date.now() });
+    chrome.runtime.sendMessage({ type: "RESULT_UPDATED", keyword }).catch(() => {});
+    state.settled += 1;
+    delete state.failures[keyword];
+    await setJob({
+      current: state.settled,
+      cached: state.cached,
+      failures: Object.values(state.failures),
+      message: `Đã xong “${keyword}”`
+    });
+  } catch (error) {
+    if (isCurlExpired(error)) throw stopForFatalError(error);
+    if (analysisFatalError) throw analysisFatalError;
+    if (error.code === "CANCELLED" || cancelRequested) throw cancelledError();
+    state.failures[keyword] = {
+      keyword,
+      message: error.message,
+      queueAttempt,
+      failedAt: Date.now()
+    };
+    if (queueAttempt < QUEUE_ATTEMPTS) {
+      state.queue.push({ keyword, queueAttempt: queueAttempt + 1 });
+      await setJob({
+        current: state.settled,
+        cached: state.cached,
+        failures: Object.values(state.failures),
+        message: `Đã đưa “${keyword}” xuống cuối queue để thử lại.`
+      });
+    } else {
+      state.settled += 1;
+      await setJob({
+        current: state.settled,
+        cached: state.cached,
+        failures: Object.values(state.failures),
+        message: `Bỏ qua “${keyword}” sau ${QUEUE_ATTEMPTS} lượt queue; tiếp tục keyword khác.`
+      });
+    }
+  }
 }
 
 async function runAnalysis() {
-  const stored = await storageGet(["keywords", "results", "jobState", "cacheMinutes"]);
+  const stored = await storageGet([
+    "keywords", "results", "jobState", "cacheMinutes", "parallelAnalysis"
+  ]);
   if (stored.results) {
     await migrateLegacyResults(stored.results);
     await chrome.storage.local.remove("results");
@@ -293,102 +427,54 @@ async function runAnalysis() {
     .map((item) => item.trim()).filter(Boolean);
   if (!keywords.length) throw new Error("Danh sách keyword đang trống.");
   cancelRequested = false;
+  analysisFatalError = null;
   const cacheMinutes = normalizeCacheMinutes(stored.cacheMinutes);
   const cacheTtlMs = cacheMinutes * 60 * 1000;
+  const parallelAnalysis = typeof stored.parallelAnalysis === "boolean"
+    ? stored.parallelAnalysis
+    : DEFAULT_PARALLEL_ANALYSIS;
+  const concurrency = parallelAnalysis ? PARALLEL_KEYWORD_LIMIT : 1;
   await setJob({
     status: "running",
     current: 0,
     total: keywords.length,
-    message: "Đang chuẩn bị queue…",
+    message: parallelAnalysis
+      ? `Đang chuẩn bị queue · tối đa ${concurrency} keyword song song…`
+      : "Đang chuẩn bị queue · chạy tuần tự…",
     errorCode: null,
     failures: [],
     cached: 0,
-    cacheMinutes
+    cacheMinutes,
+    parallelAnalysis,
+    concurrency
   });
   const queue = keywords.map((keyword) => ({ keyword, queueAttempt: 1 }));
-  const failures = {};
-  let settled = 0;
-  let cached = 0;
+  const state = {
+    queue,
+    failures: {},
+    settled: 0,
+    cached: 0,
+    cacheMinutes,
+    cacheTtlMs
+  };
   while (queue.length) {
     assertNotCancelled();
-    const task = queue.shift();
-    const { keyword, queueAttempt } = task;
-    const existing = await getAnalysisResult(keyword);
-    if (cacheTtlMs > 0 && existing && Date.now() - existing.collectedAt < cacheTtlMs) {
-      settled += 1;
-      cached += 1;
-      delete failures[keyword];
-      await setJob({
-        current: settled,
-        cached,
-        failures: Object.values(failures),
-        message: `Dùng cache dưới ${cacheMinutes} phút: “${keyword}”`
-      });
-      continue;
-    }
-    try {
-      await setJob({
-        current: settled,
-        message: `Đang quét Etsy: “${keyword}”${queueAttempt > 1 ? " · lượt queue cuối" : ""}`
-      });
-      const listingIds = await scrapeKeywordWithRetry(keyword, async (attempt, total, error) => {
-        await setJob({
-          message: `Tải Etsy lỗi, retry ${attempt}/${total}: “${keyword}” · ${error.message}`
-        });
-      });
-      await setJob({ current: settled, message: `Đang lấy dữ liệu SEO (${listingIds.length} listings)…` });
-      const data = await callListingApiWithRetry(keyword, listingIds, async (attempt, total, error) => {
-        await setJob({
-          message: `Fetch eRank lỗi, retry ${attempt}/${total}: “${keyword}” · ${error.message}`
-        });
-      });
-      await putAnalysisResult({ keyword, listingIds, data, collectedAt: Date.now() });
-      chrome.runtime.sendMessage({ type: "RESULT_UPDATED", keyword }).catch(() => {});
-      settled += 1;
-      delete failures[keyword];
-      await setJob({
-        current: settled,
-        cached,
-        failures: Object.values(failures),
-        message: `Đã xong “${keyword}”`
-      });
-    } catch (error) {
-      if (error.code === "CURL_EXPIRED" || error.message.startsWith("CURL_EXPIRED")) throw error;
-      if (error.code === "CANCELLED" || cancelRequested) throw cancelledError();
-      failures[keyword] = {
-        keyword,
-        message: error.message,
-        queueAttempt,
-        failedAt: Date.now()
-      };
-      if (queueAttempt < QUEUE_ATTEMPTS) {
-        queue.push({ keyword, queueAttempt: queueAttempt + 1 });
-        await setJob({
-          current: settled,
-          cached,
-          failures: Object.values(failures),
-          message: `Đã đưa “${keyword}” xuống cuối queue để thử lại.`
-        });
-      } else {
-        settled += 1;
-        await setJob({
-          current: settled,
-          cached,
-          failures: Object.values(failures),
-          message: `Bỏ qua “${keyword}” sau ${QUEUE_ATTEMPTS} lượt queue; tiếp tục keyword khác.`
-        });
-      }
-    }
+    const batch = queue.splice(0, concurrency);
+    const results = await Promise.allSettled(batch.map((task) => processKeywordTask(task, state)));
+    if (analysisFatalError) throw analysisFatalError;
+    if (cancelRequested) throw cancelledError();
+    const unexpected = results.find((result) => result.status === "rejected");
+    if (unexpected) throw unexpected.reason;
   }
-  const failed = Object.values(failures);
+  const failed = Object.values(state.failures);
   await setJob({
     status: failed.length ? "done_with_errors" : "done",
     current: keywords.length,
-    cached,
+    cached: state.cached,
     failures: failed,
     message: failed.length
-      ? `Hoàn tất với ${failed.length} keyword lỗi; ${cached} keyword dùng cache.`
-      : `Hoàn tất ${keywords.length} keyword; ${cached} keyword dùng cache.`
+      ? `Hoàn tất với ${failed.length} keyword lỗi; ${state.cached} keyword dùng cache.`
+      : `Hoàn tất ${keywords.length} keyword; ${state.cached} keyword dùng cache.`
   });
 }
 
@@ -410,10 +496,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "STOP_ANALYSIS") {
     cancelRequested = true;
-    for (const controller of activeFetchControllers) controller.abort();
-    const tabs = [...activeTabIds];
-    Promise.allSettled(tabs.map((tabId) => chrome.tabs.remove(tabId)))
-      .then(() => sendResponse({ ok: true }));
+    abortActiveWork().then(() => sendResponse({ ok: true }));
     return true;
   }
   if (message?.type === "OPEN_DASHBOARD") {

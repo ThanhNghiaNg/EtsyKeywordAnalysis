@@ -29,7 +29,7 @@
           <button id="runBtn">Chạy phân tích</button>
         </div>
       </header>
-      <div id="notice" class="notice" hidden></div>
+      <div id="notice" class="notice" aria-live="polite" hidden></div>
       <section id="overview" class="view active">
         <div id="summaryCards" class="cards"></div>
         <div class="grid two">
@@ -61,6 +61,14 @@
             </section>
           </div>
           <div id="formulaStatus" class="config-state">Công thức chạy trong sandbox riêng, không có quyền truy cập Chrome hoặc trang web.</div>
+        </article>
+        <article class="execution-settings">
+          <div><small>CHẾ ĐỘ THỰC THI</small><h2>Phân tích keyword song song</h2><p id="parallelAnalysisHelp" class="muted">Bật để xử lý tối đa 3 keyword cùng lúc. Tắt để chạy lần lượt từng keyword; retry, queue lỗi và cache không thay đổi.</p></div>
+          <label class="switch-control" for="parallelAnalysis">
+            <input id="parallelAnalysis" type="checkbox" role="switch" aria-describedby="parallelAnalysisHelp">
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+            <strong id="parallelAnalysisState">Tắt</strong>
+          </label>
         </article>
         <article class="cache-settings"><div><small>HIỆU LỰC CACHE</small><h2>Không tải lại keyword vừa phân tích</h2><p class="muted">Nhập số phút muốn tái sử dụng kết quả. Đặt 0 để luôn quét và fetch lại.</p></div><div class="cache-control"><input id="cacheMinutes" type="number" min="0" max="43200" step="1" value="10"><span>phút</span><button id="saveCache">Lưu cache</button></div></article>
         <article class="danger-zone"><div><h3>Xóa dữ liệu phân tích</h3><p class="muted">Xóa toàn bộ kết quả đã lưu, không xóa keyword/cấu hình.</p></div><button id="clearResults" class="danger">Xóa kết quả</button></article>

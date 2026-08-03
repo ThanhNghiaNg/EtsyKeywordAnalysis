@@ -1,17 +1,89 @@
-.cache-settings {
+.cache-settings,
+.execution-settings {
   margin-top: 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 24px;
 }
 
 .cache-settings h2,
-.cache-settings p {
+.cache-settings p,
+.execution-settings h2,
+.execution-settings p {
   margin: 0;
 }
 
-.cache-settings p {
+.cache-settings p,
+.execution-settings p {
   margin-top: 5px;
+}
+
+.switch-control {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  position: relative;
+  width: 50px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid #9baba7;
+  border-radius: 999px;
+  background: #dce4e1;
+  transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.switch-track span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 4px #102f2d42;
+  transition: transform 180ms ease;
+}
+
+.switch-control input:checked + .switch-track {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.switch-control input:checked + .switch-track span {
+  transform: translateX(22px);
+}
+
+.switch-control input:focus-visible + .switch-track {
+  outline: 3px solid #4ba19666;
+  outline-offset: 3px;
+}
+
+.switch-control:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.switch-control strong {
+  min-width: 28px;
+  font-size: 12px;
 }
 
 .cache-control {
@@ -329,6 +401,12 @@ th[data-tooltip]:focus .info-icon {
   .formula-grid {
     grid-template-columns: 1fr;
   }
+
+  .cache-settings,
+  .execution-settings {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .listing a {
@@ -339,4 +417,11 @@ th[data-tooltip]:focus .info-icon {
 .listing h3 a:hover {
   color: var(--green);
   text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch-track,
+  .switch-track span {
+    transition: none;
+  }
 }

@@ -849,6 +849,12 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("scroll", hideFieldTooltip, true);
 window.addEventListener("resize", hideFieldTooltip);
 
+function paintParallelAnalysis(enabled) {
+  const input = $("#parallelAnalysis");
+  input.checked = enabled;
+  $("#parallelAnalysisState").textContent = enabled ? "Bật" : "Tắt";
+}
+
 function paintJob(state = {}) {
   const dot = $("#statusDot");
   const hasErrors = state.status === "error" || state.status === "done_with_errors";
@@ -859,6 +865,7 @@ function paintJob(state = {}) {
     state.status === "done" ? "Phân tích hoàn tất" : "Sẵn sàng";
   $("#runBtn").disabled = state.status === "running";
   $("#stopBtn").hidden = state.status !== "running";
+  $("#parallelAnalysis").disabled = state.status === "running";
   const notice = $("#notice");
   if (state.status === "running" || state.status === "error" || state.status === "done_with_errors") {
     notice.hidden = false;
@@ -872,7 +879,7 @@ function paintJob(state = {}) {
 
 async function loadState() {
   const stored = await chrome.storage.local.get([
-    "keywords", "results", "apiConfig", "jobState", "cacheMinutes", "scoreFormulas"
+    "keywords", "results", "apiConfig", "jobState", "cacheMinutes", "parallelAnalysis", "scoreFormulas"
   ]);
   if (stored.results) {
     await migrateLegacyResults(stored.results);
@@ -902,6 +909,7 @@ async function loadState() {
   $("#tagScoreFormula").value = scoreFormulas.tag;
   $("#keywordInput").value = (stored.keywords?.length ? stored.keywords : DEFAULT_KEYWORDS).join("\n");
   $("#cacheMinutes").value = Number.isFinite(Number(stored.cacheMinutes)) ? Number(stored.cacheMinutes) : 10;
+  paintParallelAnalysis(stored.parallelAnalysis === true);
   $("#configState").textContent = stored.apiConfig?.accessToken
     ? `Đã nhập curl lúc ${new Date(stored.apiConfig.importedAt || Date.now()).toLocaleString("vi-VN")}.`
     : "Chưa nhập curl. Extension sẽ thử dùng phiên đăng nhập eRank trong trình duyệt.";
@@ -1010,6 +1018,16 @@ $("#stopBtn").addEventListener("click", async () => {
   $("#stopBtn").disabled = true;
   await chrome.runtime.sendMessage({ type: "STOP_ANALYSIS" });
   $("#stopBtn").disabled = false;
+});
+$("#parallelAnalysis").addEventListener("change", async (event) => {
+  const parallelAnalysis = event.target.checked;
+  paintParallelAnalysis(parallelAnalysis);
+  await chrome.storage.local.set({ parallelAnalysis });
+  $("#notice").hidden = false;
+  $("#notice").className = "notice";
+  $("#notice").textContent = parallelAnalysis
+    ? "Đã bật phân tích song song, tối đa 3 keyword cùng lúc."
+    : "Đã chuyển sang chạy tuần tự từng keyword.";
 });
 $("#saveCache").addEventListener("click", async () => {
   const value = Number($("#cacheMinutes").value);
